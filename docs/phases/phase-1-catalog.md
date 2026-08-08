@@ -8,7 +8,7 @@ Small phase, and deliberately so. It exists because every later phase needs an `
 
 ---
 
-## E1.1 — Catalog API · `TODO`
+## E1.1 — Catalog API · `DONE`
 
 **Goal:** CRUD for `Project`, `Application`, and `Environment`.
 
@@ -21,18 +21,26 @@ Small phase, and deliberately so. It exists because every later phase needs an `
 - Nested reads: `GET /projects/:id` includes its applications; `GET /applications/:id` includes its environments.
 - Deletes rely on the cascade rules from E0.3 rather than manual cleanup.
 
-**Files:** `apps/api/src/projects/**`, `apps/api/src/applications/**`, `apps/api/src/environments/**`
+**Files:** `apps/api/src/projects/**`, `apps/api/src/applications/**`, `apps/api/src/environments/**`, `apps/api/src/common/mappers.ts`
+
+**As built**
+
+- **A mapper layer per entity** converts Prisma rows to wire shapes — `Date` → ISO string, JSON TEXT → parsed object. That layer is also where credential redaction will hook in, so it earns its place rather than being ceremony.
+- **Parent existence is checked explicitly** before a create, so an unknown `projectId` is a 404 naming the project rather than a foreign-key violation surfacing as a 500.
+- `undefined` and `null` are kept distinct in PATCH bodies: unsupplied leaves a column alone, explicit null clears it.
+- **New e2e database harness.** `test/global-setup.ts` deletes and re-migrates `data/agentx-e2e.db` before each run, and `setup-e2e.ts` pins `DATABASE_URL` to it. Catalog tests write rows; pointing them at the dev database would mutate whatever the developer had open in Prisma Studio, and inheriting a developer's `.env` is how the Phase 0 `dev.db` problem happened.
 
 **Acceptance**
 
-- [ ] Full CRUD on all three resources, verified against a running API.
-- [ ] A malformed `baseUrl` is rejected at the boundary with a 400 naming the field.
-- [ ] Deleting a project removes its applications and environments.
-- [ ] A 404 on a missing id returns the shared error shape, not a Prisma stack trace.
+- [x] Full CRUD on all three resources, verified by e2e against a real database and by hand in a browser.
+- [x] A malformed `baseUrl` (`localhost:4321`) is rejected with a 400 naming `baseUrl`.
+- [x] Deleting a project removes its applications and environments — asserted by e2e and confirmed directly in SQLite (all counts 0).
+- [x] A 404 on a missing id returns the shared error shape; the e2e explicitly asserts no Prisma text leaks into the message.
+- [x] Responses are *parsed* through the shared schemas in the tests, so the wire contract itself is what is asserted.
 
 ---
 
-## E1.2 — Catalog UI · `TODO`
+## E1.2 — Catalog UI · `DONE`
 
 **Goal:** the catalog is usable without curl.
 
@@ -45,17 +53,25 @@ Small phase, and deliberately so. It exists because every later phase needs an `
 - Forms validate client-side against the **same** `@agentx/shared` schemas the API validates with, so the two cannot disagree.
 - Empty states that point at the next action, since the demo starts from an empty database.
 
-**Files:** `apps/web/src/app/projects/**`, `apps/web/src/components/**`
+**Files:** `apps/web/src/app/projects/**`, `apps/web/src/app/applications/[id]/**`, `apps/web/src/components/catalog/**`, `apps/web/src/lib/use-api.ts`
+
+**As built**
+
+- shadcn primitives generated: button, input, label, textarea, table, card, badge, dialog.
+- `useResource` handles loading/error/reload and resets **during render** on a key change, so a new page never briefly shows the previous resource's data.
+- **Delete is a dialog that names the cascade**, not `window.confirm`. A native modal blocks the page, and "are you sure?" without saying what else disappears is not informed consent.
+- Dialogs validate client-side against the *same* shared schema the API uses, then map any server-side `issues` back onto the offending fields.
 
 **Acceptance**
 
-- [ ] Create, edit, and delete each resource entirely through the UI.
-- [ ] A server-side validation error renders against the offending field rather than as a toast.
-- [ ] Rows created in the UI appear in `npm run db:studio`.
+- [x] Created project → application → environment entirely through the browser, then deleted the project and watched the cascade empty the list.
+- [x] A validation error renders against the offending field — verified twice in the browser: an empty name (client-side, no request) and `localhost:4321` rejected with "must be an http:// or https:// URL".
+- [x] Rows created in the UI are present in SQLite; deletion removes them (`Project: 0, Application: 0, Environment: 0`).
+- [x] No console errors or warnings across the whole walkthrough.
 
 ---
 
-## E1.3 — Credential references · `TODO`
+## E1.3 — Credential references · `DONE`
 
 **Goal:** a test can log in without a secret ever entering the database.
 
@@ -71,9 +87,17 @@ Small phase, and deliberately so. It exists because every later phase needs an `
 
 **Security note:** this is the one place in the MVP where a mistake leaks something real. Secrets stay in the process environment. They must not reach SQLite, the evidence directory, the report output, or the LLM prompt context. The redaction pass is part of this epic, not a follow-up — evidence files are written to disk and shared, and a password captured in a `network.json` is a leak that outlives the run.
 
+**As built**
+
+- `CredentialsService.status()` returns names and booleans for the UI; `resolve()` returns values plus a `Redactor` **primed with those values**, so the thing that needs scrubbing is handed over together with the means to scrub it.
+- `MissingCredentialError` names *every* missing variable at once — one restart per run, not per variable.
+- `Redactor` ignores values shorter than 4 characters (redacting a 2-character "secret" would scrub unrelated substrings out of every DOM snapshot), redacts longest-first so overlapping secrets cannot leave a fragment, and walks object **keys** as well as values.
+- `GET /environments/:id/credentials` is the only credential endpoint, and it is structurally incapable of returning a value.
+
 **Acceptance**
 
-- [ ] A recorded login stores `passwordEnv`, and the spec contains no password.
-- [ ] An unset variable fails the run with a message naming the variable, before the browser opens.
-- [ ] A grep of `data/evidence/` after a login run finds no credential value.
-- [ ] Credential values do not appear in any `LlmCall` prompt payload.
+- [x] The environment stores `{"usernameEnv":"DEMO_USER","passwordEnv":"DEMO_PASSWORD","extra":{}}` — verified by reading the SQLite row directly. `DEMO_USER` was set to `demo@example.com` in the API process at the time; that value appears nowhere in the database.
+- [x] An unset variable is reported before anything runs: the UI showed ✓ `DEMO_USER` / ✗ `DEMO_PASSWORD`, and `resolve()` throws naming the missing variables.
+- [x] The credential status response contains no values — asserted in both the unit test and the e2e.
+- [ ] A grep of `data/evidence/` after a login run finds no credential value — **deferred to Phase 3**, which is when evidence files first exist. The `Redactor` they will use is built and unit-tested.
+- [ ] Credential values do not appear in any `LlmCall` prompt payload — **deferred to Phase 5**, same reason.
