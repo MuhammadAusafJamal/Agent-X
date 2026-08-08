@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Query,
   Sse,
@@ -11,8 +12,10 @@ import {
 } from '@nestjs/common';
 import { map, type Observable } from 'rxjs';
 import {
+  adjudicateStepSchema,
   listExecutionsQuerySchema,
   startExecutionSchema,
+  type AdjudicateStepInput,
   type Execution,
   type ExecutionDetail,
   type ListExecutionsQuery,
@@ -63,5 +66,16 @@ export class ExecutionsController {
   @HttpCode(200)
   cancel(@Param('id') id: string): Promise<Execution> {
     return this.executions.cancel(id);
+  }
+
+  /** A human settles a step the verifier returned UNCERTAIN for. */
+  @Patch(':id/steps/:stepId')
+  adjudicate(
+    @Param('id') id: string,
+    @Param('stepId') stepId: string,
+    @Body(new ZodValidationPipe(adjudicateStepSchema))
+    body: AdjudicateStepInput,
+  ): Promise<ExecutionDetail> {
+    return this.executions.adjudicate(id, stepId, body);
   }
 }

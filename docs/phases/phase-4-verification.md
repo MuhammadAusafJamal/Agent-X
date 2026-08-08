@@ -10,7 +10,7 @@ The ordering principle: **deterministic checks run always and decide most steps 
 
 ---
 
-## E4.1 — Deterministic verifier · `TODO`
+## E4.1 — Deterministic verifier · `DONE`
 
 **Goal:** most steps get a verdict with no model call.
 
@@ -36,14 +36,16 @@ The ordering principle: **deterministic checks run always and decide most steps 
 
 **Acceptance**
 
-- [ ] Each checker is unit-tested as a pure function against fixture observations.
-- [ ] A false expectation produces `FAIL` naming the actual value.
-- [ ] An unevaluatable expectation returns `INCONCLUSIVE`, never a default `PASS`.
-- [ ] Allowlisted console noise does not fail a step.
+- [x] `checkUrl`, `checkNetwork`, `checkConsole`, and `rollUp` are pure functions of what was observed, unit-tested without a browser (18 tests).
+- [x] A false expectation produces `FAIL` naming the actual value: *"Expected the URL to prefix "/dashboard", but it was "/login?error=1"."*
+- [x] **"No evidence of failure" is not "evidence of success."** A `NETWORK_OK` check that matched no requests returns `INCONCLUSIVE` and escalates, rather than passing by default.
+- [x] Allowlisted console noise does not fail a step.
+- [x] A relative URL expectation is compared against the path, so a spec written against `localhost:4321` still means something on staging.
+- [x] An unparseable regex fails the check instead of crashing the run.
 
 ---
 
-## E4.2 — Semantic verifier · `TODO`
+## E4.2 — Semantic verifier · `DONE (real model unverified)`
 
 **Goal:** judgment calls that the DOM cannot settle.
 
@@ -59,16 +61,20 @@ The ordering principle: **deterministic checks run always and decide most steps 
 
 **Files:** `apps/api/src/verifier/semantic/**`, `apps/api/src/llm/prompts/verify.ts`
 
-**Acceptance**
+**Acceptance** — model stubbed, so what is proven is the *routing*
 
-- [ ] A semantic expectation ("the order confirmation shows the right total") returns a verdict with a rationale.
-- [ ] An ambiguous page returns `UNCERTAIN` rather than a coin-flip `PASS`.
-- [ ] A step decided deterministically makes **zero** model calls — verified by the `LlmCall` count on the execution.
-- [ ] Prompt input stays within a sane token budget on a large page.
+- [x] A `SEMANTIC` expectation reaches the model and its rationale is stored on the step.
+- [x] A step decided deterministically makes **zero** model calls — asserted by counting calls, not by inspection.
+- [x] A `VISIBLE` expectation with no targeting hints escalates rather than guessing.
+- [x] **An unreachable model does not become a `PASS`.** The step stays `UNCERTAIN` and the run reports `UNCERTAIN` — the failure mode that matters most here, since a broken verifier that reports green is worse than no verifier.
+- [x] Prompt input is capped: the ARIA snapshot is truncated at 6000 characters and redacted before it leaves.
+- [ ] A real model returning a sensible verdict on a real page — not verified, same as the compiler. Needs a live `ANTHROPIC_API_KEY`.
+
+> The prompt's most important instruction is the licence to answer `UNCERTAIN`: a confident wrong verdict is the expensive failure, while an `UNCERTAIN` costs a human one glance.
 
 ---
 
-## E4.3 — Three-state results · `TODO`
+## E4.3 — Three-state results · `DONE`
 
 **Goal:** `UNCERTAIN` is a first-class outcome, not a rounding error.
 
@@ -85,13 +91,16 @@ The ordering principle: **deterministic checks run always and decide most steps 
 
 **Acceptance**
 
-- [ ] An `UNCERTAIN` step never silently becomes a `PASS`.
-- [ ] Roll-up rules are unit-tested against every combination.
-- [ ] A failing optional step leaves the run green but visible.
+- [x] An `UNCERTAIN` step never silently becomes a `PASS` — asserted at the unit level and end to end.
+- [x] Roll-up is a pure function, unit-tested across the combinations that matter: a known failure outranks an open question, and an **uncertain optional** step still makes the run uncertain. Optional means "need not succeed", not "need not be looked at".
+- [x] A failing optional step leaves the run green but visible.
+- [x] **`UNCERTAIN` does not stop the run**, unlike a failure: the remaining steps may still produce useful evidence, and the question is for a human afterwards.
+- [x] Adjudication settles an open question and recomputes the run status; the verifier's original doubt and the human's decision are both kept on the record.
+- [x] Adjudicating an already-decided step is refused with a 400 — this resolves questions, it is not an override switch.
 
 ---
 
-## E4.4 — Evidence viewer · `TODO`
+## E4.4 — Evidence viewer · `DONE`
 
 **Goal:** the human can check the verdict for themselves.
 
@@ -107,6 +116,8 @@ The ordering principle: **deterministic checks run always and decide most steps 
 
 **Acceptance**
 
-- [ ] Every step's evidence is reachable in two clicks from the run view.
-- [ ] The rationale is shown next to the evidence it cites, not on a separate screen.
-- [ ] Adjudicating an `UNCERTAIN` step updates the run roll-up.
+- [x] Every step's evidence is one click from the run view; the trace and video are at the top.
+- [x] The rationale renders inline on the step, next to the evidence it cites — a verdict you have to go hunting to understand is one people stop reading.
+- [x] Failed requests and console errors are surfaced **inline** rather than only inside a downloadable file, so the reason for a `FAIL` is visible without opening anything.
+- [x] An `UNCERTAIN` step shows "The verifier could not settle this. Your call:" with Passed/Failed controls, and adjudicating updates the run roll-up.
+- [ ] A dedicated full-page evidence viewer (side-by-side DOM/network/console panels) — not built. The inline summary plus per-artifact links covers the diagnosis path; a richer viewer earns its keep in Phase 6, where a human reviews a proposed heal against before/after evidence.

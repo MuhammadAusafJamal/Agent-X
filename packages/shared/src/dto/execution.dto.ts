@@ -11,6 +11,18 @@ export const startExecutionSchema = z.object({
 });
 export type StartExecutionInput = z.infer<typeof startExecutionSchema>;
 
+/**
+ * A human settling an `UNCERTAIN` step.
+ *
+ * Only those two outcomes: adjudication exists to resolve a question the
+ * verifier could not, so re-marking something as uncertain is not a move.
+ */
+export const adjudicateStepSchema = z.object({
+  status: z.enum(['PASS', 'FAIL']),
+  note: z.string().max(500).nullish(),
+});
+export type AdjudicateStepInput = z.infer<typeof adjudicateStepSchema>;
+
 export const listExecutionsQuerySchema = paginationQuerySchema.extend({
   specId: z.string().min(1).optional(),
   environmentId: z.string().min(1).optional(),

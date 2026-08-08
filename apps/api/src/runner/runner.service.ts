@@ -5,13 +5,16 @@ import { chromium, type BrowserContext, type Page } from 'playwright';
 import {
   actionTypeSchema,
   credentialRefsSchema,
+  expectationSchema,
   observationPayloadSchema,
   parseJson,
   stepDataSchema,
   stringifyJson,
   targetHintsSchema,
+  type ConsoleEntry,
   type ExecutionSseEvent,
   type ExecutionStatus,
+  type NetworkEntry,
   type StepStatus,
 } from '@agentx/shared';
 import type { TestStep as TestStepRow } from '../generated/prisma/client';
@@ -19,6 +22,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TypedConfigService } from '../config/typed-config.service';
 import { EvidenceService } from '../evidence/evidence.service';
 import { ResolverService } from '../resolver/resolver.service';
+import { VerifierService } from '../verifier/verifier.service';
+import { rollUp } from '../verifier/deterministic';
 import {
   CredentialsService,
   type ResolvedCredentials,
@@ -62,6 +67,7 @@ export class RunnerService {
     private readonly evidence: EvidenceService,
     private readonly resolver: ResolverService,
     private readonly credentials: CredentialsService,
+    private readonly verifier: VerifierService,
   ) {}
 
   async run(executionId: string, hooks: RunHooks): Promise<void> {
@@ -126,8 +132,11 @@ export class RunnerService {
     await context.tracing.start({ screenshots: true, snapshots: true });
 
     let page: Page | null = null;
-    let status: ExecutionStatus = 'PASSED';
+    // Null means "let the roll-up decide"; only cancellation and hard errors
+    // short-circuit that.
+    let status: ExecutionStatus | null = null;
     let runError: string | null = null;
+    const outcomes: { status: StepStatus; optional: boolean }[] = [];
 
     try {
       page = await context.newPage();
@@ -155,10 +164,12 @@ export class RunnerService {
           hooks,
         );
 
-        if (outcome === 'FAIL' && !step.optional) {
-          status = 'FAILED';
-          break;
-        }
+        outcomes.push({ status: outcome, optional: step.optional });
+
+        // A failure stops the run; an UNCERTAIN does not. An unresolved
+        // question is for a human to settle afterwards, and the remaining
+        // steps may still produce useful evidence.
+        if (outcome === 'FAIL' && !step.optional) break;
       }
     } catch (error) {
       status = 'ERROR';
@@ -172,7 +183,9 @@ export class RunnerService {
       await browser.close().catch(() => undefined);
     }
 
-    await this.finish(executionId, status, hooks, { error: runError });
+    await this.finish(executionId, status ?? rollUp(outcomes), hooks, {
+      error: runError,
+    });
   }
 
   /** One step: resolve, act, observe, record. */
@@ -258,6 +271,33 @@ export class RunnerService {
             );
     }
 
+    // Drained before verification, because the verifier judges on what the
+    // browser reported during *this* step.
+    const observed = collector.drain();
+    let rationale: string | null = null;
+
+    if (status === 'PASS') {
+      const verdict = await this.verifier.verify(
+        page,
+        parseJson(
+          expectationSchema,
+          step.expectation,
+          `TestStep.expectation#${step.id}`,
+        ),
+        {
+          intent: step.intent,
+          hints,
+          network: observed.network,
+          console: observed.console,
+          redactor: credentials.redactor,
+          executionId,
+        },
+      );
+
+      status = verdict.status;
+      rationale = verdict.rationale;
+    }
+
     const finishedAt = new Date();
 
     await this.captureStepEvidence(
@@ -266,7 +306,7 @@ export class RunnerService {
       executionId,
       dir,
       step.index,
-      collector,
+      observed,
       credentials.redactor,
     );
 
@@ -275,6 +315,7 @@ export class RunnerService {
       data: {
         status,
         error,
+        verifierRationale: rationale,
         resolvedSelector,
         resolutionStrategy: strategy,
         candidateCount,
@@ -305,11 +346,10 @@ export class RunnerService {
     executionId: string,
     dir: string,
     index: number,
-    collector: ObservationCollector,
+    observed: { network: NetworkEntry[]; console: ConsoleEntry[] },
     redactor: Redactor,
   ): Promise<void> {
     const stepDir = `${dir}/step-${index}`;
-    const observed = collector.drain();
 
     const write = async (
       name: string,

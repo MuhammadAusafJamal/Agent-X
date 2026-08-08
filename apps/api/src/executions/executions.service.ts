@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EMPTY, Subject, type Observable } from 'rxjs';
 import type {
+  AdjudicateStepInput,
   Execution,
   ExecutionDetail,
   ExecutionSseEvent,
@@ -8,6 +9,7 @@ import type {
   Paginated,
   StartExecutionInput,
 } from '@agentx/shared';
+import { rollUp } from '../verifier/deterministic';
 import { PrismaService } from '../prisma/prisma.service';
 import { RunnerService } from '../runner/runner.service';
 import { BadRequestError, NotFoundError } from '../common/errors';
@@ -133,6 +135,70 @@ export class ExecutionsService {
     });
 
     return toExecution(updated);
+  }
+
+  /**
+   * A human settles a step the verifier could not.
+   *
+   * The original rationale is kept and the human's decision appended, so the
+   * record shows both what the verifier said and who overruled it. The run
+   * status is then recomputed — settling the last open question is what turns
+   * an UNCERTAIN run green.
+   */
+  async adjudicate(
+    executionId: string,
+    stepId: string,
+    input: AdjudicateStepInput,
+  ): Promise<ExecutionDetail> {
+    const step = await this.prisma.executionStep.findUnique({
+      where: { id: stepId },
+    });
+
+    if (step === null || step.executionId !== executionId) {
+      throw new NotFoundError('Execution step', stepId);
+    }
+
+    if (step.status !== 'UNCERTAIN') {
+      throw new BadRequestError(
+        `Only an UNCERTAIN step can be adjudicated; this one is ${step.status}.`,
+      );
+    }
+
+    await this.prisma.executionStep.update({
+      where: { id: stepId },
+      data: {
+        status: input.status,
+        verifierRationale: [
+          step.verifierRationale,
+          `Adjudicated ${input.status} by a human${
+            input.note === null || input.note === undefined
+              ? ''
+              : `: ${input.note}`
+          }.`,
+        ]
+          .filter((part) => part !== null && part !== '')
+          .join(' '),
+      },
+    });
+
+    const steps = await this.prisma.executionStep.findMany({
+      where: { executionId },
+      include: { step: { select: { optional: true } } },
+    });
+
+    await this.prisma.execution.update({
+      where: { id: executionId },
+      data: {
+        status: rollUp(
+          steps.map((executed) => ({
+            status: executed.status,
+            optional: executed.step?.optional ?? false,
+          })),
+        ),
+      },
+    });
+
+    return this.get(executionId);
   }
 
   streamOrEmpty(id: string): Observable<ExecutionSseEvent> {

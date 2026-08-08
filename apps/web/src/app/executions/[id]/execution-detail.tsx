@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { z } from "zod";
 import {
   executionDetailSchema,
   executionSchema,
@@ -184,6 +185,8 @@ export function ExecutionDetail({ executionId }: { executionId: string }) {
               key={step.index}
               step={step}
               artifacts={execution.artifacts}
+              executionId={executionId}
+              onAdjudicated={resource.reload}
             />
           ))}
         </ol>
@@ -195,14 +198,41 @@ export function ExecutionDetail({ executionId }: { executionId: string }) {
 function StepRow({
   step,
   artifacts,
+  executionId,
+  onAdjudicated,
 }: {
   step: ExecutionStepWithObservations;
   artifacts: Artifact[];
+  executionId: string;
+  onAdjudicated: () => void;
 }) {
+  const [pending, setPending] = useState(false);
   const mine = artifacts.filter(
     (artifact) => artifact.executionStepId === step.id,
   );
   const shot = mine.find((artifact) => artifact.kind === "SCREENSHOT");
+
+  const network = step.observations.find((o) => o.kind === "NETWORK");
+  const failedRequests =
+    network?.payload.kind === "NETWORK"
+      ? network.payload.entries.filter((entry) => (entry.status ?? 0) >= 400)
+      : [];
+
+  const consoleObs = step.observations.find((o) => o.kind === "CONSOLE");
+  const consoleErrors =
+    consoleObs?.payload.kind === "CONSOLE"
+      ? consoleObs.payload.entries.filter((entry) => entry.type === "error")
+      : [];
+
+  function adjudicate(status: "PASS" | "FAIL") {
+    setPending(true);
+    apiFetch(`/executions/${executionId}/steps/${step.id}`, z.unknown(), {
+      method: "PATCH",
+      body: { status },
+    })
+      .then(onAdjudicated)
+      .finally(() => setPending(false));
+  }
 
   return (
     <li className="border-border bg-card flex gap-4 rounded-lg border p-3">
@@ -252,6 +282,59 @@ function StepRow({
 
         {step.error !== null ? (
           <p className="text-destructive mt-1 text-xs">{step.error}</p>
+        ) : null}
+
+        {/* The rationale sits next to the evidence it cites, not on another
+            screen — a verdict you have to go hunting to understand is one
+            people stop reading. */}
+        {step.verifierRationale !== null ? (
+          <p className="text-muted-foreground mt-1 text-xs">
+            {step.verifierRationale}
+          </p>
+        ) : null}
+
+        {failedRequests.length > 0 ? (
+          <ul className="text-destructive mt-1 space-y-0.5 font-mono text-xs">
+            {failedRequests.slice(0, 3).map((entry, index) => (
+              <li key={index} className="truncate">
+                {entry.status} {entry.method} {entry.url}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {consoleErrors.length > 0 ? (
+          <ul className="text-destructive mt-1 space-y-0.5 font-mono text-xs">
+            {consoleErrors.slice(0, 3).map((entry, index) => (
+              <li key={index} className="truncate">
+                console: {entry.text}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {step.status === "UNCERTAIN" ? (
+          <div className="border-border mt-2 flex items-center gap-2 rounded-md border border-dashed p-2">
+            <span className="text-muted-foreground text-xs">
+              The verifier could not settle this. Your call:
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => adjudicate("PASS")}
+            >
+              Passed
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => adjudicate("FAIL")}
+            >
+              Failed
+            </Button>
+          </div>
         ) : null}
 
         {mine.length > 0 ? (
