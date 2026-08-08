@@ -4,6 +4,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { CredentialsModule } from './credentials/credentials.module';
 import { EvidenceModule } from './evidence/evidence.module';
 import { HealthModule } from './health/health.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
 import { LlmModule } from './llm/llm.module';
 import { RecorderModule } from './recorder/recorder.module';
 import { SpecsModule } from './specs/specs.module';
@@ -23,6 +24,7 @@ import { EnvironmentsModule } from './environments/environments.module';
     ProjectsModule,
     ApplicationsModule,
     EnvironmentsModule,
+    KnowledgeModule,
     LlmModule,
     RecorderModule,
     SpecsModule,

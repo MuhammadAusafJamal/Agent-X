@@ -1,10 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { Locator, Page } from 'playwright';
 import {
   RESOLUTION_LADDER,
+  elementChoiceSchema,
   type ResolutionStrategy,
   type TargetHints,
 } from '@agentx/shared';
+import { LlmService } from '../llm/llm.service';
+import type { Redactor } from '../credentials/redactor';
+import { RESOLVE_ELEMENT_PROMPT } from '../llm/prompts/resolve-element.prompt';
 
 /** One thing to try: a strategy, and the locator it produces. */
 interface Candidate {
@@ -41,6 +45,19 @@ export interface ResolveOptions {
   knownSelector?: string | null;
   /** How long to keep retrying the whole ladder while the page settles. */
   timeoutMs?: number;
+  /**
+   * Permission to spend a model call when the deterministic rungs fail.
+   *
+   * Off by default, and deliberately so: the verifier resolves elements too,
+   * and a visibility check quietly costing a model call per step is how a
+   * "deterministic" run ends up with a bill.
+   */
+  llm?: {
+    intent: string;
+    targetDescription: string;
+    executionId: string;
+    redactor?: Redactor;
+  };
 }
 
 /**
@@ -61,6 +78,7 @@ const CONFIDENCE: Record<ResolutionStrategy, number> = {
 };
 
 const MAX_INSPECTED = 20;
+const MAX_SNAPSHOT_CHARS = 6000;
 
 /**
  * Turns a step's description into exactly one element.
@@ -77,6 +95,12 @@ const MAX_INSPECTED = 20;
 @Injectable()
 export class ResolverService {
   private readonly logger = new Logger(ResolverService.name);
+
+  /**
+   * Optional so the resolver can be constructed bare in tests, and so the
+   * deterministic ladder never depends on a model being reachable.
+   */
+  constructor(@Optional() private readonly llm?: LlmService) {}
 
   async resolve(
     page: Page,
@@ -127,10 +151,118 @@ export class ResolverService {
       await page.waitForTimeout(200);
     } while (Date.now() < deadline);
 
+    // Rung 6, once. Only after every free option is exhausted, and only when
+    // the caller has explicitly paid for it.
+    if (options.llm !== undefined && this.llm !== undefined) {
+      const chosen = await this.resolveWithModel(
+        page,
+        hints,
+        options.llm,
+        attempted,
+      );
+
+      if (chosen !== null) return chosen;
+    }
+
     return {
       ok: false,
       attempted,
       message: describeFailure(hints, attempted),
+    };
+  }
+
+  /**
+   * Asks the model to name the control, then finds it deterministically.
+   *
+   * The model answers with a role and an accessible name, never a selector, so
+   * its answer faces the same "exactly one visible, enabled element" rule as
+   * every other rung. A model that names something ambiguous or imaginary fails
+   * the step instead of steering a click.
+   */
+  private async resolveWithModel(
+    page: Page,
+    hints: TargetHints,
+    options: NonNullable<ResolveOptions['llm']>,
+    attempted: ResolutionFailure['attempted'],
+  ): Promise<ResolutionSuccess | null> {
+    let snapshot: string;
+
+    try {
+      snapshot = await page.locator('body').ariaSnapshot({ timeout: 5000 });
+    } catch {
+      return null;
+    }
+
+    if (snapshot.length > MAX_SNAPSHOT_CHARS) {
+      snapshot = `${snapshot.slice(0, MAX_SNAPSHOT_CHARS)}\n… (truncated)`;
+    }
+
+    let choice;
+
+    try {
+      choice = await this.llm!.structured({
+        promptId: RESOLVE_ELEMENT_PROMPT.id,
+        promptVersion: RESOLVE_ELEMENT_PROMPT.version,
+        toolName: RESOLVE_ELEMENT_PROMPT.toolName,
+        toolDescription: RESOLVE_ELEMENT_PROMPT.toolDescription,
+        system: RESOLVE_ELEMENT_PROMPT.system,
+        user: RESOLVE_ELEMENT_PROMPT.user({
+          intent: options.intent,
+          targetDescription: options.targetDescription,
+          recordedHints: describeHints(hints),
+          snapshot,
+        }),
+        schema: elementChoiceSchema,
+        executionId: options.executionId,
+        redactor: options.redactor,
+        maxTokens: 1000,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `LLM resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+
+    if (!choice.found || choice.role === null || choice.name === null) {
+      attempted.push({
+        strategy: 'LLM',
+        selector: choice.rationale,
+        matched: 0,
+      });
+      return null;
+    }
+
+    const candidate: Candidate = {
+      strategy: 'LLM',
+      selector: `role=${choice.role}[name="${choice.name}"]`,
+      locator: page.getByRole(choice.role as Parameters<Page['getByRole']>[0], {
+        name: choice.name,
+        exact: false,
+      }),
+    };
+
+    const outcome = await this.evaluate(candidate);
+
+    attempted.push({
+      strategy: 'LLM',
+      selector: candidate.selector,
+      matched: outcome.total,
+    });
+
+    if (outcome.locator === null) return null;
+
+    this.logger.log(
+      `Resolved by model: ${candidate.selector} — ${choice.rationale}`,
+    );
+
+    return {
+      ok: true,
+      locator: outcome.locator,
+      strategy: 'LLM',
+      selector: candidate.selector,
+      candidateCount: outcome.total,
+      confidence: CONFIDENCE.LLM,
     };
   }
 
@@ -178,21 +310,41 @@ export class ResolverService {
           : [
               {
                 strategy,
-                selector: `testid=${hints.testId}`,
+                // A real CSS selector, not a label. This string is remembered
+                // and later fed back to page.locator(), so it has to be
+                // something Playwright can actually parse.
+                selector: `[data-testid="${hints.testId}"]`,
                 locator: page.getByTestId(hints.testId),
               },
             ];
 
-      case 'TEXT':
-        return hints.text === undefined || hints.text.length > 60
-          ? []
-          : [
-              {
-                strategy,
-                selector: `text=${hints.text}`,
-                locator: page.getByText(hints.text, { exact: false }),
-              },
-            ];
+      case 'TEXT': {
+        if (hints.text === undefined || hints.text.length > 60) return [];
+
+        // Constrained by the recorded role when there is one. Matching bare
+        // text is how a step meant for the "Sign in" *button* ends up clicking
+        // the "Sign in" *heading* — a unique match, so the uniqueness rule
+        // waves it through, and the run fails later for a reason that points
+        // nowhere near the cause.
+        const locator =
+          hints.role === undefined
+            ? page.getByText(hints.text, { exact: false })
+            : page.getByRole(hints.role as Parameters<Page['getByRole']>[0], {
+                name: hints.text,
+                exact: false,
+              });
+
+        return [
+          {
+            strategy,
+            selector:
+              hints.role === undefined
+                ? `text=${hints.text}`
+                : `role=${hints.role} with text “${hints.text}”`,
+            locator,
+          },
+        ];
+      }
 
       case 'CSS':
         return hints.selectorCandidates
@@ -249,6 +401,19 @@ export class ResolverService {
       total,
     };
   }
+}
+
+/** The recorded hints, phrased for a prompt rather than for a log line. */
+function describeHints(hints: TargetHints): string {
+  const parts = [
+    hints.role === undefined ? null : `role: ${hints.role}`,
+    hints.name === undefined ? null : `accessible name: "${hints.name}"`,
+    hints.testId === undefined ? null : `test id: ${hints.testId}`,
+    hints.text === undefined ? null : `visible text: "${hints.text}"`,
+    hints.landmark === undefined ? null : `inside: ${hints.landmark}`,
+  ].filter((part) => part !== null);
+
+  return parts.length === 0 ? '(nothing was captured)' : parts.join('\n');
 }
 
 function describeFailure(

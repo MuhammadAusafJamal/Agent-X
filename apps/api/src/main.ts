@@ -17,11 +17,12 @@ import { TypedConfigService } from './config/typed-config.service';
  * `apps/api/.env` wins, because dotenv never overwrites an existing value.
  */
 function loadEnvironment(): void {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-  dotenv.config({
-    // apps/api/dist → repo root
-    path: path.resolve(__dirname, '..', '..', '..', '.env'),
-  });
+  // Both anchored to __dirname, never to the working directory: `npm run
+  // dev:api` runs from apps/api while `node apps/api/dist/main.js` runs from
+  // the repo root, and a cwd-relative path silently resolves to the same file
+  // twice in the second case — loading one .env and appearing to load two.
+  dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+  dotenv.config({ path: path.resolve(__dirname, '..', '..', '..', '.env') });
 }
 
 loadEnvironment();

@@ -24,6 +24,8 @@ import { EvidenceService } from '../evidence/evidence.service';
 import { ResolverService } from '../resolver/resolver.service';
 import { VerifierService } from '../verifier/verifier.service';
 import { rollUp } from '../verifier/deterministic';
+import { KnowledgeService } from '../knowledge/knowledge.service';
+import { stepKey } from '../resolver/step-key';
 import {
   CredentialsService,
   type ResolvedCredentials,
@@ -40,6 +42,15 @@ import {
 
 const STEP_TIMEOUT_MS = 15_000;
 const RUN_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Ceiling on model calls for one run, shared by the resolver and the verifier.
+ *
+ * A guard against a pathological spec quietly costing a fortune — a run that
+ * needs more than this is telling you its hints have rotted, not that it needs
+ * a bigger allowance.
+ */
+const MAX_LLM_CALLS_PER_RUN = 20;
 
 export interface RunHooks {
   emit: (event: ExecutionSseEvent) => void;
@@ -68,6 +79,7 @@ export class RunnerService {
     private readonly resolver: ResolverService,
     private readonly credentials: CredentialsService,
     private readonly verifier: VerifierService,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   async run(executionId: string, hooks: RunHooks): Promise<void> {
@@ -136,6 +148,7 @@ export class RunnerService {
     // short-circuit that.
     let status: ExecutionStatus | null = null;
     let runError: string | null = null;
+    let budgetWarned = false;
     const outcomes: { status: StepStatus; optional: boolean }[] = [];
 
     try {
@@ -153,6 +166,21 @@ export class RunnerService {
           break;
         }
 
+        // Counted from the audit rows, so the verifier's calls count against
+        // the same budget as the resolver's. Exceeding it degrades the run to
+        // deterministic-only rather than ending it — a spec that has already
+        // spent its allowance still produces evidence.
+        const spent = await this.prisma.llmCall.count({
+          where: { executionId: execution.id },
+        });
+
+        if (spent >= MAX_LLM_CALLS_PER_RUN && !budgetWarned) {
+          budgetWarned = true;
+          this.logger.warn(
+            `Execution ${executionId} hit its budget of ${MAX_LLM_CALLS_PER_RUN} model calls; remaining steps are deterministic only.`,
+          );
+        }
+
         const outcome = await this.runStep(
           page,
           execution.id,
@@ -162,6 +190,8 @@ export class RunnerService {
           execution.environment.baseUrl,
           dir,
           hooks,
+          execution.environment.applicationId,
+          spent < MAX_LLM_CALLS_PER_RUN,
         );
 
         outcomes.push({ status: outcome, optional: step.optional });
@@ -198,6 +228,8 @@ export class RunnerService {
     fallbackUrl: string,
     dir: string,
     hooks: RunHooks,
+    applicationId: string,
+    withinBudget: boolean,
   ): Promise<StepStatus> {
     const hints = parseJson(
       targetHintsSchema,
@@ -232,6 +264,7 @@ export class RunnerService {
     let strategy: string | null = null;
     let candidateCount: number | null = null;
     let confidence: number | null = null;
+    let learnedKey: string | null = null;
 
     try {
       // Enum columns are TEXT in SQLite, so the value is parsed, not asserted.
@@ -239,13 +272,51 @@ export class RunnerService {
       let locator = null;
 
       if (NEEDS_TARGET.has(action)) {
+        const key = stepKey({
+          action,
+          intent: step.intent,
+          targetDescription: step.targetDescription,
+        });
+        learnedKey = key;
+
+        // Rung 1: what worked last time, if it is still trusted.
+        const remembered = await this.knowledge.recall(applicationId, key);
+
         const resolution = await this.resolver.resolve(page, hints, {
           timeoutMs: STEP_TIMEOUT_MS / 2,
+          knownSelector: remembered?.selector ?? null,
+          // Rung 6 costs money, so it is offered only while the run is within
+          // its budget.
+          llm: withinBudget
+            ? {
+                intent: step.intent,
+                targetDescription: step.targetDescription ?? step.intent,
+                executionId,
+                redactor: credentials.redactor,
+              }
+            : undefined,
         });
 
         if (!resolution.ok) {
+          if (remembered !== null) {
+            await this.knowledge.forgetIfWrong(applicationId, key);
+          }
           throw new Error(resolution.message);
         }
+
+        // A remembered selector that did not win has gone stale.
+        if (remembered !== null && resolution.strategy !== 'KNOWLEDGE') {
+          await this.knowledge.forgetIfWrong(applicationId, key);
+        }
+
+        // Learned on every success, not only the interesting ones: that is what
+        // makes the *second* run of a spec take rung 1 and spend nothing.
+        await this.knowledge.remember(
+          applicationId,
+          key,
+          resolution.selector,
+          resolution.strategy,
+        );
 
         locator = resolution.locator;
         resolvedSelector = resolution.selector;
@@ -296,6 +367,18 @@ export class RunnerService {
 
       status = verdict.status;
       rationale = verdict.rationale;
+
+      // Resolution succeeding is not the same as having found the right
+      // element. If a remembered selector led to a step that then failed
+      // verification, that memory is what took us there — decay it, or rung 1
+      // will confidently repeat the mistake on every future run.
+      if (
+        status === 'FAIL' &&
+        strategy === 'KNOWLEDGE' &&
+        learnedKey !== null
+      ) {
+        await this.knowledge.forgetIfWrong(applicationId, learnedKey);
+      }
     }
 
     const finishedAt = new Date();

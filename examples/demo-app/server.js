@@ -68,7 +68,11 @@ function loginPage({ error, step } = {}) {
   // recorded against the one-page form no longer finds it where it was.
   const wantsSecondStep = BREAK.moveField && step !== '2';
 
+  // A real redesign renames the control *and* renumbers whatever hook the test
+  // was holding onto. Changing only the label would leave the test id matching,
+  // and the deterministic ladder would never even notice.
   const submitLabel = BREAK.renameSubmit ? 'Continue' : 'Sign in';
+  const submitTestId = BREAK.renameSubmit ? 'continue-cta' : 'login-submit';
   const errorHtml = error ? `<div class="error" role="alert">${error}</div>` : '';
 
   if (wantsSecondStep) {
@@ -105,7 +109,7 @@ function loginPage({ error, step } = {}) {
          <input id="remember" name="remember" type="checkbox">
          <label for="remember">Remember me</label>
        </div>
-       <button type="submit" data-testid="login-submit">${submitLabel}</button>
+       <button type="submit" data-testid="${submitTestId}">${submitLabel}</button>
      </form>`,
   );
 }
