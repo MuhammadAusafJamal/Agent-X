@@ -1,9 +1,30 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+import * as path from 'node:path';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { EnvValidationError, validateEnv } from './config/env.schema';
 import { TypedConfigService } from './config/typed-config.service';
+
+/**
+ * Environment comes from either `.env`.
+ *
+ * `.env.example` lives at the repo root, so that is where people naturally copy
+ * it to — but the API runs with `apps/api` as its working directory. Loading
+ * both removes a footgun whose only symptom is the app refusing to start with a
+ * key that is, as far as the operator is concerned, plainly set.
+ *
+ * `apps/api/.env` wins, because dotenv never overwrites an existing value.
+ */
+function loadEnvironment(): void {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+  dotenv.config({
+    // apps/api/dist → repo root
+    path: path.resolve(__dirname, '..', '..', '..', '.env'),
+  });
+}
+
+loadEnvironment();
 
 async function bootstrap(): Promise<void> {
   // Validate before the module graph loads. `ConfigModule.forRoot({ validate })`

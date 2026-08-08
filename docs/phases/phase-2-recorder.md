@@ -162,8 +162,14 @@ Supporting pieces:
 - [x] An inferred step gets empty hints rather than invented ones.
 - [x] Compiling a recording with no events is refused with a 400.
 - [x] The compiled version is `RECORDED`, numbered 1, and linked to its recording.
-- [ ] **A recorded login compiles into readable steps — NOT VERIFIED.** The whole chain was exercised against the live API and fails only at the model call itself: `401 invalid x-api-key`, surfaced cleanly in the UI, with the `LlmCall` row still written. Everything up to and including the HTTP request to Anthropic works. Verifying the *quality* of the output needs a real `ANTHROPIC_API_KEY`.
-- [ ] A malformed model response retries once — the retry path is written but has not been exercised against a real model.
+- [x] **A recorded login compiles into readable steps — VERIFIED against the real model** (claude-sonnet-5, ~11s, one call). A 9-event login-and-invoice recording produced *"Sign in as business user and create an invoice"* with 7 steps such as *"Enter the demo user's password into the sign in form"*.
+  - **It merged 9 events into 7 steps**, folding both `NAVIGATE` events into the preceding clicks' expectations — rule 6 of the prompt working, not a transcript.
+  - The password came back as `{kind: ENV_REF, envVar: DEMO_PASSWORD}`.
+  - No intent contained a selector.
+  - **Zero expectations came back `SEMANTIC`**, so verifying this spec costs no model calls at all — the steering toward deterministic kinds held.
+- [ ] A malformed model response retries once — the retry path is written but the real model has not yet produced a malformed response to exercise it.
+
+> **Prompt improvement worth making:** the model emitted `scope: 'form "Sign in"'` for a `TEXT` expectation, which is a landmark description rather than the CSS selector that field expects. It degrades safely (see phase 4), but the prompt should say `scope` must be a CSS selector.
 
 ---
 

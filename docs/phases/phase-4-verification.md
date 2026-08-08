@@ -68,7 +68,8 @@ The ordering principle: **deterministic checks run always and decide most steps 
 - [x] A `VISIBLE` expectation with no targeting hints escalates rather than guessing.
 - [x] **An unreachable model does not become a `PASS`.** The step stays `UNCERTAIN` and the run reports `UNCERTAIN` — the failure mode that matters most here, since a broken verifier that reports green is worse than no verifier.
 - [x] Prompt input is capped: the ARIA snapshot is truncated at 6000 characters and redacted before it leaves.
-- [ ] A real model returning a sensible verdict on a real page — not verified, same as the compiler. Needs a live `ANTHROPIC_API_KEY`.
+- [x] **A real model returning a sensible verdict on a real page — VERIFIED.** Running the compiled spec against the demo app: 7/7 passed, **6 steps decided deterministically at zero cost**, and exactly one escalated. Its rationale: *"The accessibility snapshot shows the combobox "Account type" with option "Business" marked as [selected], confirming the Business account type was chosen as intended."* — grounded in the snapshot, as the prompt demands. One call, 1330 in / 155 out.
+- [x] **The escalation path proved itself on an unplanned input.** That step escalated because the compiler had emitted `scope: 'form "Sign in"'` — not a valid CSS selector. `checkText` caught the throw and returned `INCONCLUSIVE` instead of crashing the run, which is exactly the degradation the three-state design exists for: a checker that cannot evaluate its own expectation hands over rather than guessing.
 
 > The prompt's most important instruction is the licence to answer `UNCERTAIN`: a confident wrong verdict is the expensive failure, while an `UNCERTAIN` costs a human one glance.
 

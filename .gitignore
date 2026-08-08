@@ -19,6 +19,10 @@ out/
 # Local database and evidence tree (traces, video, screenshots, DOM/network logs)
 data/
 
+# Prisma's init default, if DATABASE_URL is left pointing at it
+dev.db
+dev.db-journal
+
 # Prisma client — generated TypeScript, emitted under src/ so it compiles with the app
 apps/api/src/generated/
 
