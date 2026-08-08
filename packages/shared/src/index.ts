@@ -16,5 +16,7 @@ export * from './shapes';
 export * from './json';
 export * from './api';
 export * from './events';
+export * from './recorder';
+export * from './compiler';
 export * from './domain';
 export * from './dto';

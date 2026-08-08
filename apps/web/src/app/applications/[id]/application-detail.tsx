@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { applicationWithEnvironmentsSchema } from "@agentx/shared";
+import {
+  applicationWithEnvironmentsSchema,
+  paginated,
+  recordingSchema,
+  testSpecSchema,
+} from "@agentx/shared";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -16,6 +22,7 @@ import { ApplicationDialog } from "@/components/catalog/application-dialog";
 import { CredentialStatus } from "@/components/catalog/credential-status";
 import { DeleteButton } from "@/components/catalog/delete-button";
 import { EnvironmentDialog } from "@/components/catalog/environment-dialog";
+import { StartRecordingDialog } from "@/components/recorder/start-recording-dialog";
 import { EmptyState, ErrorBanner, Loading } from "@/components/ui-bits";
 import { apiFetch } from "@/lib/api";
 import { useResource } from "@/lib/use-api";
@@ -33,6 +40,24 @@ export function ApplicationDetail({
         applicationWithEnvironmentsSchema,
       ),
     applicationId,
+  );
+
+  const recordings = useResource(
+    () =>
+      apiFetch(
+        `/recordings?applicationId=${applicationId}`,
+        paginated(recordingSchema),
+      ),
+    `${applicationId}-recordings`,
+  );
+
+  const specs = useResource(
+    () =>
+      apiFetch(
+        `/specs?applicationId=${applicationId}`,
+        paginated(testSpecSchema),
+      ),
+    `${applicationId}-specs`,
   );
 
   if (resource.status === "loading") {
@@ -79,6 +104,11 @@ export function ApplicationDetail({
         </div>
 
         <div className="flex gap-2">
+          <StartRecordingDialog
+            applicationId={application.id}
+            baseUrl={application.environments[0]?.baseUrl ?? application.baseUrl}
+            environments={application.environments}
+          />
           <ApplicationDialog
             projectId={application.projectId}
             application={application}
@@ -97,6 +127,69 @@ export function ApplicationDetail({
           />
         </div>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="font-heading text-sm font-semibold">
+          Test specifications
+        </h2>
+
+        {specs.status === "ok" && specs.data.items.length > 0 ? (
+          <ul className="border-border divide-border divide-y rounded-lg border text-sm">
+            {specs.data.items.map((spec) => (
+              <li key={spec.id} className="flex items-center gap-3 px-4 py-2">
+                <Link
+                  href={`/specs/${spec.id}`}
+                  className="flex-1 font-medium hover:underline"
+                >
+                  {spec.name}
+                </Link>
+                <Badge variant="outline" className="text-xs">
+                  {spec.source}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            None yet. Record a session and compile it into one.
+          </p>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="font-heading text-sm font-semibold">Recordings</h2>
+
+        {recordings.status === "ok" && recordings.data.items.length > 0 ? (
+          <ul className="border-border divide-border divide-y rounded-lg border text-sm">
+            {recordings.data.items.map((recording) => (
+              <li
+                key={recording.id}
+                className="flex items-center gap-3 px-4 py-2"
+              >
+                <Link
+                  href={`/recordings/${recording.id}`}
+                  className="flex-1 truncate font-mono text-xs hover:underline"
+                >
+                  {recording.startUrl}
+                </Link>
+                <span className="text-muted-foreground text-xs">
+                  {recording.eventCount ?? 0} events
+                </span>
+                <Badge
+                  variant={
+                    recording.status === "RECORDING" ? "secondary" : "outline"
+                  }
+                  className="text-xs"
+                >
+                  {recording.status}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground text-sm">No recordings yet.</p>
+        )}
+      </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">

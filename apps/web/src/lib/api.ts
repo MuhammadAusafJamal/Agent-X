@@ -12,6 +12,11 @@ import type { z } from "zod";
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+/** URL of an evidence artifact, from the relative path stored on its row. */
+export function evidenceUrl(relPath: string): string {
+  return `${API_BASE_URL}/evidence/${relPath}`;
+}
+
 /** A failed request. Carries the parsed API error when the server sent one. */
 export class ApiRequestError extends Error {
   constructor(

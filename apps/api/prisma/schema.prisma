@@ -118,8 +118,12 @@ model RecordedEvent {
   url         String
   timestamp   DateTime
 
-  /// Typed text or selected option. Redacted when it came from a credential field.
+  /// Typed text or selected option. Null when it came from a password field.
   value        String?
+  /// True when the value came from a password field. The value itself is never
+  /// stored; this flag is what lets the compiler emit a credential reference
+  /// instead of guessing from the field's name.
+  isSecret     Boolean @default(false)
   targetRole   String?
   targetName   String?
   targetText   String?

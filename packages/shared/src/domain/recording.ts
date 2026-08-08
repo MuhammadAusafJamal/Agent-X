@@ -20,8 +20,10 @@ export const recordedEventSchema = z.object({
   type: recordedEventTypeSchema,
   url: z.string(),
   timestamp: isoDateTimeSchema,
-  /** Typed text or selected option. Redacted when it came from a credential field. */
+  /** Typed text or selected option. Null when it came from a password field. */
   value: z.string().nullable(),
+  /** The value came from a password field, so it was never stored. */
+  isSecret: z.boolean(),
   targetRole: z.string().nullable(),
   targetName: z.string().nullable(),
   targetText: z.string().nullable(),

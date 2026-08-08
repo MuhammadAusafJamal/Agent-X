@@ -20,6 +20,7 @@
     "db:migrate": "npm run db:migrate --workspace @agentx/api",
     "db:studio": "npm run db:studio --workspace @agentx/api",
     "db:reset": "npm run db:reset --workspace @agentx/api",
+    "demo:app": "node examples/demo-app/server.js",
     "playwright:install": "playwright install chromium"
   },
   "devDependencies": {
