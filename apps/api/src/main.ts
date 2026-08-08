@@ -1,8 +1,62 @@
+import 'dotenv/config';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { EnvValidationError, validateEnv } from './config/env.schema';
+import { TypedConfigService } from './config/typed-config.service';
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+async function bootstrap(): Promise<void> {
+  // Validate before the module graph loads. `ConfigModule.forRoot({ validate })`
+  // runs at module-evaluation time, so a static `import './app.module'` would
+  // throw during require — where Nest's own handler logs a dependency-injection
+  // stack trace over the one thing the operator needs to read, which is the list
+  // of missing keys. Checking here, then importing dynamically, keeps that
+  // output clean.
+  validateEnv(process.env);
+
+  // The .js extension is required by nodenext resolution for a dynamic import;
+  // TypeScript maps it back to app.module.ts.
+  const { AppModule } = await import('./app.module.js');
+
+  const app = await NestFactory.create(AppModule, { abortOnError: false });
+  const config = app.get(TypedConfigService);
+
+  app.enableCors({ origin: config.get('WEB_ORIGIN'), credentials: true });
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.enableShutdownHooks();
+
+  const port = config.get('PORT');
+  await app.listen(port);
+
+  new Logger('Bootstrap').log(
+    `API listening on http://localhost:${port} — CORS allows ${config.get('WEB_ORIGIN')}`,
+  );
 }
-bootstrap();
+
+bootstrap().catch((error: unknown) => {
+  const envError = findEnvValidationError(error);
+
+  if (envError) {
+    process.stderr.write(`\n${envError.message}\n\n`);
+    process.exit(1);
+  }
+
+  process.stderr.write(
+    `\nFailed to start the API:\n${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n\n`,
+  );
+  process.exit(1);
+});
+
+/** Nest may wrap a module-initialization failure, so walk the cause chain. */
+function findEnvValidationError(error: unknown): EnvValidationError | null {
+  let current = error;
+
+  for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
+    if (current instanceof EnvValidationError) {
+      return current;
+    }
+    current = current.cause;
+  }
+
+  return null;
+}

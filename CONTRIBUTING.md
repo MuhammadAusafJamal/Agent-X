@@ -29,14 +29,31 @@
 
 ## Coding conventions
 
-_To be filled in once the stack is chosen._ Until then, the standing rules are:
+The standing rules:
 
-- **Parse at the boundary, don't cast.** Untrusted input (HTTP query, CLI arg, tool argument) is narrowed by a validating parser before it reaches anything that trusts it. A cast on request data is how unvalidated input reaches a query or a shell.
+- **Parse at the boundary, don't cast.** Untrusted input (HTTP body, LLM response, JSON column, CLI arg) is narrowed by a validating parser before it reaches anything that trusts it. A cast on request data is how unvalidated input reaches a query or a shell.
 - **Secrets from the environment only, never flags or committed files.** Add every new key to `.env.example`; keep `.env` gitignored.
 - **Validate config up front** and print exactly what's missing before doing any work.
 - **Document the _why_.** Non-trivial functions carry a doc comment explaining intent and trade-offs, not just mechanics.
 - **Deterministic output.** Anything generated (reports, fixtures, test artifacts) is sorted so repeat runs produce identical bytes.
 
+How they apply in this codebase:
+
+- **One schema, two apps.** Every wire payload is a zod schema in `packages/shared`. The API validates requests against it and the dashboard parses responses against it, so the contract cannot drift. Do not redeclare a shape locally.
+- **`ZodValidationPipe` at every controller boundary.** `@Body(new ZodValidationPipe(createProjectSchema))` — never an untyped `@Body()`.
+- **JSON columns go through `parseJson` / `stringifyJson`.** SQLite has no JSON type, so these columns are TEXT. `JSON.parse(row.targetHints) as TargetHints` is a cast wearing a parse's clothes; it is a bug.
+- **Enum-backed columns are TEXT too.** Their allowed values live in `@agentx/shared`, and `schema-contract.spec.ts` asserts the Prisma schema and the zod enums stay in step.
+- **Credentials never enter the database.** `Environment.credentialRefs` stores environment variable *names*. Resolved values are redacted before anything reaches evidence files, logs, reports, or a prompt.
+- **`strict: true` everywhere.** Implicit `any` is an uncast boundary.
+- **Errors carry a code.** Throw the `AppException` subclasses in `apps/api/src/common/errors.ts` so the dashboard branches on `code`, not on a message string. Never forward a raw database error to a client — it can quote row data.
+
 ## Local checks before a PR
 
-_Commands land here once tooling is set up (lint, typecheck, test)._ CI gates on the same set for every PR into `main`/`develop`.
+```bash
+npm run typecheck && npm run lint && npm test
+npm run test:e2e --workspace @agentx/api   # needs a migrated database
+```
+
+Also confirm a clean clone still works: `npm install && npm run db:migrate && npm run dev`.
+
+CI gates on the same set for every PR into `main`/`develop`.

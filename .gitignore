@@ -16,6 +16,12 @@ out/
 .env.*
 !.env.example
 
+# Local database and evidence tree (traces, video, screenshots, DOM/network logs)
+data/
+
+# Prisma client — generated TypeScript, emitted under src/ so it compiles with the app
+apps/api/src/generated/
+
 # Playwright
 test-results/
 playwright-report/

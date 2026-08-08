@@ -1,6 +1,6 @@
 # Data model
 
-One SQLite database owned by the API, at `data/agentx.db`, accessed through Prisma. This document is the source of truth for `apps/api/prisma/schema.prisma` and for the zod schemas in `packages/shared`.
+One SQLite database owned by the API, at `data/agentx.db`, accessed through Prisma. This document is the source of truth for `apps/api/prisma/schema.prisma` and for the zod schemas in `packages/shared`. **17 models.**
 
 ## Two SQLite constraints that shape everything below
 
