@@ -9,7 +9,7 @@ Nine phases. Each ends at something demoable, so if the clock runs out mid-plan 
 | [2 — Recorder](phases/phase-2-recorder.md) | The headline input path | Record a login by hand; watch it become an editable English spec | **`DONE`** |
 | [3 — Execution](phases/phase-3-execution.md) | Specs run and produce evidence | Replay that login end to end with a downloadable trace | **`DONE`** |
 | [4 — Verification](phases/phase-4-verification.md) | A run means something | A broken step reports FAIL with the evidence that proves it | **`DONE`** |
-| [5 — Agent](phases/phase-5-agent.md) | The intelligence layer | Rename a button; the agent still finds it, and remembers | `TODO` |
+| [5 — Agent](phases/phase-5-agent.md) | The intelligence layer | Rename a button; the agent still finds it, and remembers | **`DONE`** (E5.2 orchestrator partly — see phase file) |
 | [6 — Heal](phases/phase-6-heal.md) | Close the loop | Move a field → self-heal. Break logic → file a bug instead | `TODO` |
 | [7 — Reports](phases/phase-7-reports.md) | Ship-quality output | Deterministic reports, explorer agent, one-command demo | `TODO` |
 | [8 — Stretch](phases/phase-8-stretch.md) | Only if the above lands | Vision resolution, multi-browser, auth | `TODO` |

@@ -104,6 +104,9 @@ export function ApplicationDetail({
         </div>
 
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/knowledge/${application.id}`}>Knowledge</Link>
+          </Button>
           <StartRecordingDialog
             applicationId={application.id}
             baseUrl={application.environments[0]?.baseUrl ?? application.baseUrl}
