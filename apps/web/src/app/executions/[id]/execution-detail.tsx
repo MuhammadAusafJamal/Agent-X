@@ -293,6 +293,19 @@ function StepRow({
           </p>
         ) : null}
 
+        {/* Why it failed, next to the evidence it was concluded from. A
+            classification nobody can audit is one people learn to ignore. */}
+        {step.diagnosis !== null ? (
+          <p className="mt-1 text-xs">
+            <Badge variant="outline" className="mr-2 text-xs">
+              {step.diagnosis}
+            </Badge>
+            <span className="text-muted-foreground">
+              {step.diagnosisRationale}
+            </span>
+          </p>
+        ) : null}
+
         {failedRequests.length > 0 ? (
           <ul className="text-destructive mt-1 space-y-0.5 font-mono text-xs">
             {failedRequests.slice(0, 3).map((entry, index) => (

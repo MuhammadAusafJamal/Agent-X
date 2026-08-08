@@ -8,8 +8,19 @@
  * to tell apart has a switch here:
  *
  *   BREAK_RENAME_SUBMIT=1  the submit button's label changes  (Phase 5: the
- *                          recorded hints go stale, but the intent still holds)
- *   BREAK_MOVE_FIELD=1     a field moves to a second step     (Phase 6: heal)
+ *                          recorded hints go stale, but the intent still holds;
+ *                          Phase 6: the run survives via the model, and the
+ *                          drifted spec is queued for repair)
+ *   BREAK_REDESIGN=1       a redesign the resolver cannot     (Phase 6: heal —
+ *                          resolve: the submit is renamed,     the healer adds a
+ *                          the form relabelled, and a          landmark, which
+ *                          consent banner adds a second        is the one thing
+ *                          "Continue"                          the resolver's
+ *                                                              LLM rung cannot)
+ *   BREAK_MOVE_FIELD=1     a field moves behind a new page    (Phase 6: the
+ *                          in a two-step wizard                healer *declines*
+ *                                                              — no re-target
+ *                                                              expresses this)
  *   BREAK_500_ON_SUBMIT=1  login returns 500                  (Phase 6: bug, not heal)
  *   BREAK_SLOW_MS=2000     login responds slowly              (Phase 6: flake)
  *   BREAK_MESSAGE=1        the success wording changes        (Phase 4: semantic verify)
@@ -27,6 +38,7 @@ const PASSWORD = process.env.DEMO_APP_PASSWORD ?? 'hunter2';
 const flag = (name) => process.env[name] === '1' || process.env[name] === 'true';
 const BREAK = {
   renameSubmit: flag('BREAK_RENAME_SUBMIT'),
+  redesign: flag('BREAK_REDESIGN'),
   moveField: flag('BREAK_MOVE_FIELD'),
   serverError: flag('BREAK_500_ON_SUBMIT'),
   slowMs: Number(process.env.BREAK_SLOW_MS ?? 0),
@@ -93,10 +105,34 @@ function loginPage({ error, step } = {}) {
     : `<label for="email">Email</label>
        <input id="email" name="email" type="email" autocomplete="username" placeholder="you@example.com">`;
 
+  // A redesign that the resolver cannot work around on its own. Three changes
+  // that a real one would make together:
+  //
+  //   1. the submit control is renamed, so the recorded name and test id miss;
+  //   2. the form is relabelled, so the recorded landmark misses too;
+  //   3. a consent banner introduces a *second* "Continue".
+  //
+  // Each alone is survivable. Together the model can still name the control —
+  // "Continue" — but that name is no longer unique and the recorded landmark no
+  // longer narrows it, so the ladder correctly refuses to guess. Only a proposal
+  // that supplies a *new* landmark resolves it, which is precisely what the
+  // healer can express and the resolver's LLM rung cannot.
+  const formLabel = BREAK.redesign ? 'Account access' : 'Sign in';
+  const label = BREAK.redesign ? 'Continue' : submitLabel;
+  const testId = BREAK.redesign ? 'account-continue' : submitTestId;
+
+  const consentBanner = BREAK.redesign
+    ? `<section aria-label="Cookie notice">
+         <p class="sub">We use cookies to keep you signed in.</p>
+         <button type="button" data-testid="cookie-continue">Continue</button>
+       </section>`
+    : '';
+
   return page(
     'Sign in — Demo Shop',
     `<h1>Sign in</h1><p class="sub">Demo Shop account</p>${errorHtml}
-     <form method="POST" action="/login" aria-label="Sign in">
+     ${consentBanner}
+     <form method="POST" action="/login" aria-label="${formLabel}">
        ${emailField}
        <label for="password">Password</label>
        <input id="password" name="password" type="password" autocomplete="current-password">
@@ -109,7 +145,7 @@ function loginPage({ error, step } = {}) {
          <input id="remember" name="remember" type="checkbox">
          <label for="remember">Remember me</label>
        </div>
-       <button type="submit" data-testid="${submitTestId}">${submitLabel}</button>
+       <button type="submit" data-testid="${testId}">${label}</button>
      </form>`,
   );
 }

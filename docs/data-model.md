@@ -161,8 +161,10 @@ JSON-bearing columns are marked **`json`** in the tables below. Enum-backed colu
 | `durationMs` | Int? | |
 | `verifierRationale` | String? | why the verifier ruled as it did |
 | `error` | String? | |
+| `diagnosis` | String? **enum** | `Diagnosis` — why it failed, when it did. Null on a step that never failed |
+| `diagnosisRationale` | String? | the observation the classification rests on |
 
-> `resolutionStrategy` + `candidateCount` are not diagnostics — they are the feedback loop. A step that has needed the `LLM` rung three runs running has stale hints, and the knowledge consolidation pass acts on exactly that signal.
+> `resolutionStrategy` + `candidateCount` are not diagnostics — they are the feedback loop. A step that has needed the `LLM` rung three runs running has stale hints, and the knowledge consolidation pass acts on exactly that signal. From Phase 6 an `LLM` win on a step that *passed* is itself enough to queue a repair to the specification, since the recorded hints demonstrably resolved nothing.
 
 **Observation** — what the page looked like around a step.
 
@@ -209,11 +211,12 @@ JSON-bearing columns are marked **`json`** in the tables below. Enum-backed colu
 | `executionStepId` | String | FK → ExecutionStep |
 | `specVersionId` | String | FK → TestVersion — the version that drifted |
 | `diagnosis` | String **enum** | `Diagnosis` |
-| `originalTarget` | String **json** | |
-| `proposedTarget` | String **json** | |
+| `originalTarget` | String **json** | `TargetHints` |
+| `proposedTarget` | String **json** | `TargetHints` — may add a `landmark`, which is the hint the resolver's LLM rung cannot produce |
+| `proposedDescription` | String? | the repaired natural-language description; null leaves the original alone |
 | `rationale` | String | |
 | `status` | String **enum** | `HealingStatus` |
-| `reverifyStatus` | String? **enum** | `StepStatus` after the in-run reverify |
+| `reverifyStatus` | String? **enum** | `StepStatus` after the in-run reverify. A heal that cannot prove itself is recorded, not applied |
 | `appliedToVersionId` | String? | FK → TestVersion — the new version approval produced |
 | `reviewedAt` | DateTime? | |
 
@@ -226,10 +229,15 @@ JSON-bearing columns are marked **`json`** in the tables below. Enum-backed colu
 | `title` | String | |
 | `severity` | String **enum** | `Severity` |
 | `summary` | String | |
-| `reproSteps` | String **json** | ordered strings |
+| `reproSteps` | String **json** | ordered strings, taken from the steps that actually executed — never from the model |
 | `expected` / `actual` | String | |
 | `evidenceRefs` | String **json** | artifact ids |
 | `status` | String **enum** | `BugStatus` |
+| `fingerprint` | String | spec + step + signal, with ids and query strings normalized out. What makes a recurrence update this report rather than file a twin |
+| `occurrences` | Int | raised on each recurrence |
+| `lastSeenAt` | DateTime | |
+
+`@@index([fingerprint])`. Dedupe is scoped to reports that are still `OPEN`, so a defect that returns after someone closed it is news again.
 
 **LlmCall** — audit trail. Every model call, linked to what caused it.
 

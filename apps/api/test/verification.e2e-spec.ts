@@ -40,8 +40,18 @@ describe('Verification (e2e)', () => {
 
   /** What the stubbed verifier "decides", and how often it was asked. */
   let verdict: VerificationResult;
-  let modelCalls = 0;
   let modelFails = false;
+
+  /**
+   * Model calls counted per prompt, not in total.
+   *
+   * From Phase 6 a failing step is also *diagnosed*, which is a model call these
+   * tests are not about. Counting by prompt keeps them pinning the thing they
+   * were written to pin — that the verifier itself decided deterministically —
+   * rather than quietly relaxing to "some calls happened".
+   */
+  let calls: Record<string, number> = {};
+  const verifierCalls = (): number => calls['verify-step'] ?? 0;
 
   beforeAll(async () => {
     process.env['DEMO_USER'] = 'demo@example.com';
@@ -84,11 +94,24 @@ describe('Verification (e2e)', () => {
     })
       .overrideProvider(LlmService)
       .useValue({
-        structured: () => {
-          modelCalls += 1;
-          return modelFails
-            ? Promise.reject(new Error('the model is unreachable'))
-            : Promise.resolve(verdict);
+        structured: (options: { promptId: string }) => {
+          calls[options.promptId] = (calls[options.promptId] ?? 0) + 1;
+
+          if (modelFails) {
+            return Promise.reject(new Error('the model is unreachable'));
+          }
+
+          // Each prompt gets a shape its own schema would accept, so a stub
+          // never stands in for a contract these tests are not checking.
+          if (options.promptId === 'diagnose-failure') {
+            return Promise.resolve({
+              diagnosis: 'UNKNOWN',
+              confidence: 0.2,
+              rationale: 'stubbed',
+            });
+          }
+
+          return Promise.resolve(verdict);
         },
       })
       .compile();
@@ -139,7 +162,7 @@ describe('Verification (e2e)', () => {
   });
 
   beforeEach(() => {
-    modelCalls = 0;
+    calls = {};
     modelFails = false;
   });
 
@@ -192,7 +215,7 @@ describe('Verification (e2e)', () => {
     expect(detail.status).toBe('PASSED');
     expect(detail.steps[0]?.verifierRationale).toContain('URL prefix');
     // The whole point of deterministic-first: a decidable step costs nothing.
-    expect(modelCalls).toBe(0);
+    expect(verifierCalls()).toBe(0);
   }, 120_000);
 
   it('fails a false expectation and quotes the actual URL', async () => {
@@ -208,7 +231,7 @@ describe('Verification (e2e)', () => {
     expect(step?.verifierRationale).toContain('/');
     // The action itself succeeded — this is the verifier's verdict, not an error.
     expect(step?.error).toBeNull();
-    expect(modelCalls).toBe(0);
+    expect(verifierCalls()).toBe(0);
   }, 120_000);
 
   it('checks text on the page deterministically', async () => {
@@ -220,7 +243,7 @@ describe('Verification (e2e)', () => {
     ]);
     expect(failing.status).toBe('FAILED');
     expect(failing.steps[0]?.verifierRationale).toContain('Order confirmed');
-    expect(modelCalls).toBe(0);
+    expect(verifierCalls()).toBe(0);
   }, 180_000);
 
   it('asks the model only for a semantic expectation', async () => {
@@ -241,7 +264,7 @@ describe('Verification (e2e)', () => {
     expect(detail.steps[0]?.verifierRationale).toBe(
       'The sign-in form is present and ready.',
     );
-    expect(modelCalls).toBe(1);
+    expect(verifierCalls()).toBe(1);
   }, 120_000);
 
   it('records UNCERTAIN and refuses to call the run passed', async () => {
@@ -294,7 +317,7 @@ describe('Verification (e2e)', () => {
       }),
     ]);
 
-    expect(modelCalls).toBe(1);
+    expect(verifierCalls()).toBe(1);
     expect(detail.steps[0]?.status).toBe('PASS');
   }, 120_000);
 
@@ -311,7 +334,7 @@ describe('Verification (e2e)', () => {
       }),
     ]);
 
-    expect(modelCalls).toBe(1);
+    expect(verifierCalls()).toBe(1);
     // The failure mode that matters: a broken verifier must leave the step
     // unresolved for a human, never quietly report success.
     expect(detail.steps[0]?.status).toBe('UNCERTAIN');
@@ -381,7 +404,7 @@ describe('Verification (e2e)', () => {
 
     // "No evidence of failure" is not "evidence of success", so this escalated
     // rather than passing by default.
-    expect(modelCalls).toBe(1);
+    expect(verifierCalls()).toBe(1);
     expect(detail.status).toBe('UNCERTAIN');
   }, 120_000);
 });

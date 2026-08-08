@@ -65,7 +65,7 @@ Everything before this phase was deliberately mechanical. This is where the tool
 
 - [ ] A run that would exceed its LLM budget stops and says so.
 - [ ] Cancellation is honoured within one step.
-- [ ] A deterministic run (all steps resolve on rungs 1–5, all verify deterministically) makes zero model calls — the agent layer adds no cost when it adds no value.
+- [x] A deterministic run (all steps resolve on rungs 1–5, all verify deterministically) makes zero model calls — the agent layer adds no cost when it adds no value. **Phase 6 narrowed this to passing runs:** a step that *fails* now also buys a diagnosis, so read it as "a run whose steps all pass deterministically costs nothing".
 - [ ] Loop state is unit-tested with a stubbed browser and stubbed LLM.
 
 ---

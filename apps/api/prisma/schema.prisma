@@ -286,6 +286,13 @@ model ExecutionStep {
   verifierRationale String?
   error             String?
 
+  /// Why it failed, when it did. Null on a step that never failed.
+  /// -- enum Diagnosis
+  diagnosis          String?
+  /// The observation the diagnosis rests on. Kept next to the step because a
+  /// classification a human cannot audit is one they will learn to ignore.
+  diagnosisRationale String?
+
   execution    Execution       @relation(fields: [executionId], references: [id], onDelete: Cascade)
   step         TestStep?       @relation(fields: [stepId], references: [id], onDelete: SetNull)
   observations Observation[]
@@ -380,6 +387,10 @@ model HealingRecord {
   originalTarget  String
   /// -- json TargetHints
   proposedTarget  String
+  /// The repaired natural-language description. Null leaves the original in
+  /// place — a renamed button rarely needs "the primary submit button in the
+  /// sign-in form" rewritten, but a control that moved usually does.
+  proposedDescription String?
   rationale       String
   /// -- enum HealingStatus
   status          String
@@ -418,6 +429,14 @@ model BugReport {
   /// -- enum BugStatus
   status          String
 
+  /// Deterministic identity of the defect: the spec, the step, and the signal
+  /// that produced it. What makes the same defect recurring across runs update
+  /// the open report rather than file a twin of it.
+  fingerprint String
+  /// Raised on each recurrence. One bug seen thirty times, not thirty bugs.
+  occurrences Int      @default(1)
+  lastSeenAt  DateTime @default(now())
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -426,6 +445,7 @@ model BugReport {
 
   @@index([executionId])
   @@index([status])
+  @@index([fingerprint])
 }
 
 /// One model call. Enough to reconstruct, after the fact, which prompt version

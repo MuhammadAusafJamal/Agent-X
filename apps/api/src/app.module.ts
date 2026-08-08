@@ -13,6 +13,9 @@ import { ExecutionsModule } from './executions/executions.module';
 import { ProjectsModule } from './projects/projects.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { EnvironmentsModule } from './environments/environments.module';
+import { AgentModule } from './agent/agent.module';
+import { BugsModule } from './bugs/bugs.module';
+import { HealingsModule } from './healings/healings.module';
 
 @Module({
   imports: [
@@ -29,6 +32,9 @@ import { EnvironmentsModule } from './environments/environments.module';
     RecorderModule,
     SpecsModule,
     CompilerModule,
+    AgentModule,
+    BugsModule,
+    HealingsModule,
     ExecutionsModule,
   ],
 })

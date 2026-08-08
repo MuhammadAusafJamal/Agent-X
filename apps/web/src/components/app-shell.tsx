@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bug, Brain, FolderTree, Play } from "lucide-react";
+import { Bug, Brain, FolderTree, HeartPulse, Play } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
@@ -11,6 +11,7 @@ const NAV = [
   { href: "/projects", label: "Projects", icon: FolderTree },
   { href: "/executions", label: "Runs", icon: Play },
   { href: "/knowledge", label: "Knowledge", icon: Brain },
+  { href: "/healings", label: "Healing", icon: HeartPulse },
   { href: "/bugs", label: "Bugs", icon: Bug },
 ] as const;
 

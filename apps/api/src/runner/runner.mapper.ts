@@ -1,5 +1,6 @@
 import {
   actionTypeSchema,
+  diagnosisSchema,
   executionModeSchema,
   executionStatusSchema,
   observationKindSchema,
@@ -43,6 +44,9 @@ export function toExecutionStep(row: ExecutionStepRow): ExecutionStep {
     durationMs: row.durationMs,
     verifierRationale: row.verifierRationale,
     error: row.error,
+    diagnosis:
+      row.diagnosis === null ? null : diagnosisSchema.parse(row.diagnosis),
+    diagnosisRationale: row.diagnosisRationale,
   };
 }
 

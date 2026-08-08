@@ -248,6 +248,122 @@ describe('Action resolver (e2e)', () => {
     );
   });
 
+  /**
+   * The landmark rungs.
+   *
+   * A landmark is the only hint that can *resolve* an ambiguity rather than
+   * merely refuse it, which is why the healer's proposals are allowed to add
+   * one. If the ladder ignored it, the healer would have nothing to offer that
+   * the LLM rung had not already tried.
+   */
+  describe('landmark scoping', () => {
+    const twoDialogs = `
+      <div role="dialog" aria-label="Delete account"><button>Save</button></div>
+      <div role="dialog" aria-label="Preferences"><button>Save</button></div>
+    `;
+
+    it('tells apart two identical controls in different landmarks', async () => {
+      await page.setContent(twoDialogs);
+
+      const result = await resolver.resolve(
+        page,
+        hints({
+          role: 'button',
+          name: 'Save',
+          landmark: 'dialog "Preferences"',
+        }),
+        { timeoutMs: 800 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.strategy).toBe('ROLE_NAME');
+      // Scoped, so it matched one rather than two — the whole point.
+      expect(result.candidateCount).toBe(1);
+      await expect(
+        result.locator.evaluate((el) =>
+          el.closest('[role="dialog"]')?.getAttribute('aria-label'),
+        ),
+      ).resolves.toBe('Preferences');
+    });
+
+    it('records a scoped match as a selector that can be replayed', async () => {
+      await page.setContent(twoDialogs);
+
+      const result = await resolver.resolve(
+        page,
+        hints({
+          role: 'button',
+          name: 'Save',
+          landmark: 'dialog "Preferences"',
+        }),
+        { timeoutMs: 800 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Rung 1 replays this string verbatim on the next run. A description
+      // that merely reads like a selector is the bug this guards against.
+      expect(result.selector).toBe(
+        'role=dialog[name="Preferences"] >> role=button[name="Save"]',
+      );
+      await expect(page.locator(result.selector).count()).resolves.toBe(1);
+    });
+
+    it('still finds the control when the landmark itself was redesigned away', async () => {
+      await page.setContent(`<button>Save</button>`);
+
+      const result = await resolver.resolve(
+        page,
+        hints({
+          role: 'button',
+          name: 'Save',
+          landmark: 'dialog "Preferences"',
+        }),
+        { timeoutMs: 800 },
+      );
+
+      // The scoped attempt matched nothing and the unscoped one carried the
+      // step. A narrowing hint that has gone stale must not fail a step whose
+      // target is plainly still there.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.selector).toBe('role=button[name="Save"]');
+    });
+
+    it('maps a tag-named landmark onto the role it actually has', async () => {
+      await page.setContent(`
+        <nav aria-label="Primary"><a href="/a">Home</a></nav>
+        <main><a href="/b">Home</a></main>
+      `);
+
+      const result = await resolver.resolve(
+        page,
+        hints({ role: 'link', name: 'Home', landmark: 'nav "Primary"' }),
+        { timeoutMs: 800 },
+      );
+
+      // The recorder writes the tag when the element carries no explicit role;
+      // `role=nav` would match nothing at all.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.selector).toContain('role=navigation');
+    });
+
+    it('ignores a landmark it cannot parse rather than failing the step', async () => {
+      await page.setContent(`<button>Save</button>`);
+
+      const result = await resolver.resolve(
+        page,
+        hints({ role: 'button', name: 'Save', landmark: '>>> nonsense' }),
+        { timeoutMs: 600 },
+      );
+
+      expect(result.ok).toBe(true);
+    });
+  });
+
   it('says so plainly when a step carries no hints at all', async () => {
     await page.setContent(`<button>Sign in</button>`);
 

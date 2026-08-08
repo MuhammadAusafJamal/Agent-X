@@ -13,10 +13,26 @@ import { RESOLVE_ELEMENT_PROMPT } from '../llm/prompts/resolve-element.prompt';
 /** One thing to try: a strategy, and the locator it produces. */
 interface Candidate {
   strategy: ResolutionStrategy;
-  /** Human-readable description of what was tried, stored on the step. */
+  /**
+   * What was tried, stored on the step and — for the rungs worth remembering —
+   * written to application knowledge.
+   *
+   * It has to be a string `page.locator()` can actually parse, not a label.
+   * Rung 1 replays this verbatim, so a description like `testid=x` looks like a
+   * selector, gets remembered, and fails on every future run.
+   */
   selector: string;
   locator: Locator;
 }
+
+/**
+ * Anything a rung can search inside: the whole page, or one landmark within it.
+ *
+ * Deliberately narrow. `Page` and `Locator` share these four methods with the
+ * same signatures, and naming only the four keeps the scoping helper from
+ * quietly depending on something a `Locator` cannot do.
+ */
+type Scope = Pick<Page, 'getByRole' | 'getByTestId' | 'getByText' | 'locator'>;
 
 export interface ResolutionSuccess {
   ok: true;
@@ -26,6 +42,16 @@ export interface ResolutionSuccess {
   /** How many elements the winning strategy matched before visibility filtering. */
   candidateCount: number;
   confidence: number;
+  /**
+   * Targeting that describes what actually matched, when it differs from what
+   * the step recorded.
+   *
+   * Only the `LLM` rung sets this, and only because it is the one rung whose
+   * win means the recorded hints are *wrong* rather than merely unlucky. It is
+   * what lets a run propose a repair to the specification without paying for a
+   * second model call to rediscover something it already knows.
+   */
+  learnedHints?: TargetHints;
 }
 
 export interface ResolutionFailure {
@@ -233,37 +259,67 @@ export class ResolverService {
       return null;
     }
 
-    const candidate: Candidate = {
-      strategy: 'LLM',
-      selector: `role=${choice.role}[name="${choice.name}"]`,
-      locator: page.getByRole(choice.role as Parameters<Page['getByRole']>[0], {
-        name: choice.name,
+    const { role, name } = choice;
+    const landmark = parseLandmark(hints.landmark);
+    const selector = roleSelector(role, name);
+
+    const build = (scope: Scope): Locator =>
+      scope.getByRole(role as Parameters<Page['getByRole']>[0], {
+        name,
         exact: false,
-      }),
-    };
+      });
 
-    const outcome = await this.evaluate(candidate);
+    // The model names a control; the landmark says which copy of it. A model
+    // that answers "the Save button" on a page with two gets one more chance to
+    // be right before the uniqueness rule refuses it.
+    const candidates: Candidate[] =
+      landmark === null
+        ? [{ strategy: 'LLM', selector, locator: build(page) }]
+        : [
+            {
+              strategy: 'LLM',
+              selector: `${landmark.selector} >> ${selector}`,
+              locator: build(landmark.locator(page)),
+            },
+            { strategy: 'LLM', selector, locator: build(page) },
+          ];
 
-    attempted.push({
-      strategy: 'LLM',
-      selector: candidate.selector,
-      matched: outcome.total,
-    });
+    for (const candidate of candidates) {
+      const outcome = await this.evaluate(candidate);
 
-    if (outcome.locator === null) return null;
+      attempted.push({
+        strategy: 'LLM',
+        selector: candidate.selector,
+        matched: outcome.total,
+      });
 
-    this.logger.log(
-      `Resolved by model: ${candidate.selector} — ${choice.rationale}`,
-    );
+      if (outcome.locator === null) continue;
 
-    return {
-      ok: true,
-      locator: outcome.locator,
-      strategy: 'LLM',
-      selector: candidate.selector,
-      candidateCount: outcome.total,
-      confidence: CONFIDENCE.LLM,
-    };
+      this.logger.log(
+        `Resolved by model: ${candidate.selector} — ${choice.rationale}`,
+      );
+
+      return {
+        ok: true,
+        locator: outcome.locator,
+        strategy: 'LLM',
+        selector: candidate.selector,
+        candidateCount: outcome.total,
+        confidence: CONFIDENCE.LLM,
+        // What the specification should have said. The landmark is carried
+        // over only when it was the scoped attempt that won — otherwise it is
+        // exactly the hint that has gone stale.
+        learnedHints: {
+          role,
+          name,
+          landmark:
+            candidate.selector === selector ? undefined : hints.landmark,
+          selectorCandidates: [],
+        },
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -278,6 +334,41 @@ export class ResolverService {
     hints: TargetHints,
     knownSelector: string | null | undefined,
   ): Candidate[] {
+    const landmark = parseLandmark(hints.landmark);
+
+    /**
+     * The same lookup, scoped to the recorded landmark first and then to the
+     * whole page.
+     *
+     * Scoping is what tells "Save in the toolbar" from "Save in the dialog" —
+     * an ambiguity the uniqueness rule can only refuse, never resolve. Trying
+     * the page afterwards is what keeps a step working when the landmark itself
+     * was the thing that got redesigned.
+     */
+    const within = (
+      build: (scope: Scope) => Locator,
+      selector: string,
+    ): Candidate[] => {
+      const unscoped: Candidate = {
+        strategy,
+        selector,
+        locator: build(page),
+      };
+
+      if (landmark === null) return [unscoped];
+
+      return [
+        {
+          strategy,
+          // `>>` chains Playwright's selector engines, so a scoped match is
+          // still a string that can be remembered and replayed at rung 1.
+          selector: `${landmark.selector} >> ${selector}`,
+          locator: build(landmark.locator(page)),
+        },
+        unscoped,
+      ];
+    };
+
     switch (strategy) {
       case 'KNOWLEDGE':
         return knownSelector === null || knownSelector === undefined
@@ -292,69 +383,59 @@ export class ResolverService {
 
       case 'ROLE_NAME': {
         if (hints.role === undefined || hints.name === undefined) return [];
-        return [
-          {
-            strategy,
-            selector: `role=${hints.role}[name="${hints.name}"]`,
-            locator: page.getByRole(
-              hints.role as Parameters<Page['getByRole']>[0],
-              { name: hints.name, exact: false },
-            ),
-          },
-        ];
+        const { role, name } = hints;
+
+        return within(
+          (scope) =>
+            scope.getByRole(role as Parameters<Page['getByRole']>[0], {
+              name,
+              exact: false,
+            }),
+          roleSelector(role, name),
+        );
       }
 
-      case 'TEST_ID':
-        return hints.testId === undefined
-          ? []
-          : [
-              {
-                strategy,
-                // A real CSS selector, not a label. This string is remembered
-                // and later fed back to page.locator(), so it has to be
-                // something Playwright can actually parse.
-                selector: `[data-testid="${hints.testId}"]`,
-                locator: page.getByTestId(hints.testId),
-              },
-            ];
+      case 'TEST_ID': {
+        if (hints.testId === undefined) return [];
+        const { testId } = hints;
+
+        return within(
+          (scope) => scope.getByTestId(testId),
+          `[data-testid=${JSON.stringify(testId)}]`,
+        );
+      }
 
       case 'TEXT': {
         if (hints.text === undefined || hints.text.length > 60) return [];
+        const { text, role } = hints;
 
         // Constrained by the recorded role when there is one. Matching bare
         // text is how a step meant for the "Sign in" *button* ends up clicking
         // the "Sign in" *heading* — a unique match, so the uniqueness rule
         // waves it through, and the run fails later for a reason that points
         // nowhere near the cause.
-        const locator =
-          hints.role === undefined
-            ? page.getByText(hints.text, { exact: false })
-            : page.getByRole(hints.role as Parameters<Page['getByRole']>[0], {
-                name: hints.text,
-                exact: false,
-              });
-
-        return [
-          {
-            strategy,
-            selector:
-              hints.role === undefined
-                ? `text=${hints.text}`
-                : `role=${hints.role} with text “${hints.text}”`,
-            locator,
-          },
-        ];
+        return role === undefined
+          ? within(
+              (scope) => scope.getByText(text, { exact: false }),
+              `text=${text}`,
+            )
+          : within(
+              (scope) =>
+                scope.getByRole(role as Parameters<Page['getByRole']>[0], {
+                  name: text,
+                  exact: false,
+                }),
+              roleSelector(role, text),
+            );
       }
 
       case 'CSS':
         return hints.selectorCandidates
           .filter((candidate) => candidate.strategy === 'CSS')
           .sort((a, b) => b.score - a.score)
-          .map((candidate) => ({
-            strategy,
-            selector: candidate.value,
-            locator: page.locator(candidate.value),
-          }));
+          .flatMap((candidate) =>
+            within((scope) => scope.locator(candidate.value), candidate.value),
+          );
 
       // Phase 5 and Phase 8 respectively. Listed so the ladder stays exhaustive
       // rather than silently skipping a rung nobody noticed was missing.
@@ -401,6 +482,66 @@ export class ResolverService {
       total,
     };
   }
+}
+
+/**
+ * A role-and-name lookup as a Playwright selector string.
+ *
+ * `JSON.stringify` rather than bare quotes: this string is remembered and fed
+ * back to `page.locator()` on the next run, and a name containing a quote would
+ * otherwise produce something that no longer parses.
+ */
+function roleSelector(role: string, name: string): string {
+  return `role=${role}[name=${JSON.stringify(name)}]`;
+}
+
+/**
+ * ARIA roles for the landmark tags the recorder falls back to when the element
+ * carries no explicit role. `<nav>` is a `navigation`; searching for `role=nav`
+ * would simply match nothing.
+ */
+const LANDMARK_ROLE_FOR_TAG: Record<string, string> = {
+  nav: 'navigation',
+  header: 'banner',
+  footer: 'contentinfo',
+  section: 'region',
+};
+
+interface Landmark {
+  /** The selector prefix, so a scoped match stays replayable. */
+  selector: string;
+  locator: (page: Page) => Locator;
+}
+
+/**
+ * Parses what the recorder captured — `form "Sign in"`, or a bare `dialog` —
+ * into something the ladder can search inside.
+ *
+ * Anything that does not match that shape returns null and the ladder simply
+ * searches the whole page: a landmark is a narrowing hint, and failing to
+ * understand one is never a reason to fail a step.
+ */
+function parseLandmark(landmark: string | undefined): Landmark | null {
+  if (landmark === undefined) return null;
+
+  const match = /^([a-zA-Z][a-zA-Z-]*)(?:\s+"(.*)")?$/.exec(landmark.trim());
+  if (match === null) return null;
+
+  const tag = match[1].toLowerCase();
+  const role = (LANDMARK_ROLE_FOR_TAG[tag] ?? tag) as Parameters<
+    Page['getByRole']
+  >[0];
+  const name = match[2];
+
+  return name === undefined || name === ''
+    ? {
+        selector: `role=${role}`,
+        locator: (page) => page.getByRole(role),
+      }
+    : {
+        selector: roleSelector(role, name),
+        locator: (page) => page.getByRole(role, { name, exact: false }),
+      };
 }
 
 /** The recorded hints, phrased for a prompt rather than for a log line. */

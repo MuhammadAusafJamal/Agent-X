@@ -42,6 +42,8 @@ export const healingRecordSchema = z.object({
   diagnosis: diagnosisSchema,
   originalTarget: targetHintsSchema,
   proposedTarget: targetHintsSchema,
+  /** Null leaves the step's existing description alone. */
+  proposedDescription: z.string().nullable(),
   rationale: z.string().min(1),
   status: healingStatusSchema,
   /** Result of the in-run reverify. A heal that cannot prove itself is not applied. */
@@ -52,6 +54,32 @@ export const healingRecordSchema = z.object({
   reviewedAt: isoDateTimeSchema.nullable(),
 });
 export type HealingRecord = z.infer<typeof healingRecordSchema>;
+
+/**
+ * A queued heal, with enough around it to decide on without opening the run.
+ *
+ * A reviewer who has to go and reconstruct what the step was, which spec it
+ * belongs to, and what the page looked like will approve on trust instead of on
+ * evidence — which defeats the point of asking them.
+ */
+export const healingRecordWithContextSchema = healingRecordSchema.extend({
+  applicationId: idSchema,
+  specId: idSchema,
+  specName: z.string(),
+  /** The version number that drifted, as shown in the spec's history. */
+  specVersion: z.number().int().min(1),
+  executionId: idSchema,
+  stepIndex: z.number().int().min(0),
+  stepIntent: z.string(),
+  /** Null when the heal was proposed for a step that had no spec step behind it. */
+  stepId: idSchema.nullable(),
+  /** Evidence relative paths — the page at failure, and after the heal. */
+  beforeShotPath: z.string().nullable(),
+  afterShotPath: z.string().nullable(),
+});
+export type HealingRecordWithContext = z.infer<
+  typeof healingRecordWithContextSchema
+>;
 
 export const bugReportSchema = z.object({
   id: idSchema,
@@ -67,10 +95,30 @@ export const bugReportSchema = z.object({
   /** Artifact ids. */
   evidenceRefs: z.array(idSchema),
   status: bugStatusSchema,
+  /**
+   * Deterministic identity of the defect — the spec, the step, and the signal.
+   * Two runs hitting the same 500 on the same step share one, which is what
+   * makes a recurrence update the open report instead of filing a twin.
+   */
+  fingerprint: z.string().min(1),
+  /** Raised on each recurrence. One bug seen thirty times, not thirty bugs. */
+  occurrences: z.number().int().min(1),
+  lastSeenAt: isoDateTimeSchema,
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
 export type BugReport = z.infer<typeof bugReportSchema>;
+
+/** A bug report with the run behind it, so the view needs no second lookup. */
+export const bugReportWithContextSchema = bugReportSchema.extend({
+  applicationId: idSchema,
+  applicationName: z.string(),
+  specId: idSchema,
+  specName: z.string(),
+  /** Evidence relative paths, resolved from `evidenceRefs`. */
+  evidencePaths: z.array(z.string()),
+});
+export type BugReportWithContext = z.infer<typeof bugReportWithContextSchema>;
 
 /**
  * One model call. Enough detail to reconstruct, after the fact, which prompt

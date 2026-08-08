@@ -58,7 +58,8 @@ Things worth knowing before editing:
 - **The API owns all data.** The original spec drew the dashboard holding IndexedDB; it cannot, because the agent and runner are server-side. `apps/web` persists nothing.
 - **SQLite supports neither `enum` nor `Json` in Prisma.** Both are TEXT columns. Enums are validated by zod enums in `@agentx/shared`; JSON columns are read and written *only* through `parseJson`/`stringifyJson`. A `JSON.parse(x) as T` anywhere is a bug.
 - **The Prisma client is generated TypeScript**, into `apps/api/src/generated/prisma`, pinned to CommonJS. Do not move it out of `src/`, and re-run `npm run db:generate` after schema changes.
-- **Deterministic before intelligent.** The resolver ladder and the verifier try free, deterministic checks first and reach for the LLM only when those are inconclusive. A run that needs no model calls should make none.
+- **Deterministic before intelligent.** The resolver ladder, the verifier, and the diagnoser try free, deterministic checks first and reach for the LLM only when those are inconclusive. A run whose steps all pass deterministically should make no model calls at all. A step that *fails* buys one diagnosis — a classification is the thing a status code usually cannot settle.
+- **The model never heals over a defect.** Only a `TEST_DRIFT` classification reaches the healer, and that gate is an early return in `HealerService.propose`, not an instruction in a prompt. Everything else — including `UNKNOWN` — files a report or routes to a human.
 
 ## Conventions
 

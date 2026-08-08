@@ -35,6 +35,7 @@ apps/api (NestJS)
    ├── LLM module ──────► Anthropic (claude-sonnet-5)
    ├── Agent Orchestrator ── Planner │ Explorer │ Diagnoser │ Healer
    │        └── Action Resolver ── knowledge → role/name → testid → text → CSS → LLM
+   │                               (each scoped to the step's landmark first)
    └── Playwright ── Recorder (headed) │ Runner (trace + video + network + console)
               ▼
            Browser ──► Website under test
@@ -78,6 +79,7 @@ for each step:
       → observe (DOM, a11y, network, console, screenshot)
       → Verifier: deterministic checks first, LLM semantic check only if inconclusive
       → PASS      → next step, write knowledge
+                    (won on the LLM rung? the *spec* is wrong — queue a repair)
         FAIL      → Diagnoser
         UNCERTAIN → surfaced for a human, never coerced to PASS
 ```
@@ -85,15 +87,27 @@ for each step:
 ### Failure → heal or bug
 
 ```
-Diagnoser classifies: APP_BUG | TEST_DRIFT | ENVIRONMENT | FLAKE
-   TEST_DRIFT → Healer proposes a corrected target
+did the action run, and only the outcome fail?
+   → reverify once after a settle (never re-run the action)
+      → passes → FLAKE. This is the only evidence FLAKE is ever concluded from.
+
+Diagnoser classifies: APP_BUG | TEST_DRIFT | ENVIRONMENT | UNKNOWN
+   (settled from status codes where possible; the model never sees FLAKE as an option)
+
+   TEST_DRIFT → Healer proposes corrected TargetHints — including a landmark,
+                which is the one hint that resolves an ambiguity rather than
+                merely detecting it
+                 → resolved deterministically before being written down
                  → applied in-run → REVERIFY
                     → passes → HealingRecord queued for human approval
                     → fails  → recorded as REVERIFY_FAILED, not retried blindly
    APP_BUG    → BugReport with repro steps and evidence refs. No heal.
+   otherwise  → recorded on the step and left for a human.
 ```
 
-The asymmetry is the point: the system heals its own drift, but it never heals over a real defect in the application under test.
+The asymmetry is the point: the system heals its own drift, but it never heals over a real defect in the application under test. That gate is an early return in `HealerService.propose`, not an instruction in a prompt.
+
+**Approval writes a new `TestVersion`.** The healer changes what a *run* did; only a human changes what the *specification* says.
 
 ## Action Resolver ladder
 
@@ -109,7 +123,9 @@ Tried in order. The first strategy that yields **exactly one** visible, enabled 
 | 6 | `LLM` | Pruned a11y snapshot + `targetDescription` → chosen element + rationale | 5 |
 | 7 | `VISION` | Screenshot + coordinates | 8 |
 
-Every resolution records its winning strategy, the candidate count, and a confidence value on the `ExecutionStep`. That record is what the knowledge store and the LLM stage learn from — a step that has needed the LLM three runs running is a step whose hints are stale.
+Rungs 2–6 are tried **scoped to the step's recorded landmark first**, then against the whole page. A landmark is what tells "Save in the toolbar" from "Save in the dialog" — an ambiguity the uniqueness rule can only refuse, never resolve — and trying the page afterwards keeps a step working when the landmark itself was what got redesigned. A scoped match is recorded as a chained selector (`role=dialog[name="Preferences"] >> role=button[name="Save"]`) so it stays something `page.locator()` can parse, remember, and replay at rung 1.
+
+Every resolution records its winning strategy, the candidate count, and a confidence value on the `ExecutionStep`. That record is what the knowledge store and the LLM stage learn from — a step that has needed the LLM three runs running is a step whose hints are stale. From Phase 6 a single `LLM` win is enough to queue a repair to the specification, since it means the recorded hints resolved nothing.
 
 ## Verification
 

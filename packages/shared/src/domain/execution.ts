@@ -3,6 +3,7 @@ import { idSchema, isoDateTimeSchema } from '../primitives';
 import {
   actionTypeSchema,
   artifactKindSchema,
+  diagnosisSchema,
   executionModeSchema,
   executionStatusSchema,
   observationKindSchema,
@@ -63,6 +64,9 @@ export const executionStepSchema = z.object({
   durationMs: z.number().int().min(0).nullable(),
   verifierRationale: z.string().nullable(),
   error: z.string().nullable(),
+  /** Why it failed, when it did. Null on a step that never failed. */
+  diagnosis: diagnosisSchema.nullable(),
+  diagnosisRationale: z.string().nullable(),
 });
 export type ExecutionStep = z.infer<typeof executionStepSchema>;
 
