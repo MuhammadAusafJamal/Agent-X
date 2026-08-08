@@ -1,5 +1,12 @@
 {
   "extends": "./tsconfig.json",
-  "comment": "prisma.config.ts is CLI-only config. Compiling it would drag tsc's inferred rootDir up to the workspace root, moving the entrypoint from dist/main.js to dist/src/main.js and breaking start:prod.",
-  "exclude": ["node_modules", "test", "dist", "prisma.config.ts", "**/*spec.ts"]
+  "comment": "prisma.config.ts and prisma/seed.ts are CLI-only. Compiling either would drag tsc's inferred rootDir up to the workspace root, moving the entrypoint from dist/main.js to dist/src/main.js and breaking start:prod. They are still typechecked by tsconfig.json.",
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "prisma.config.ts",
+    "prisma/seed.ts",
+    "**/*spec.ts"
+  ]
 }

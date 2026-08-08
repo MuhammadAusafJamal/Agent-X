@@ -241,6 +241,10 @@ model Execution {
   cancelRequested Boolean @default(false)
   summary       String?
   error         String?
+  /// When this run's lessons were folded into application knowledge. Set once;
+  /// what makes consolidating the same run twice a no-op rather than a way to
+  /// inflate confidence by re-reading history.
+  consolidatedAt DateTime?
 
   spec        TestSpec    @relation(fields: [specId], references: [id], onDelete: Cascade)
   version     TestVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)

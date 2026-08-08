@@ -9,6 +9,7 @@ import {
   stepStatusSchema,
 } from '../enums';
 import { knowledgeValueSchema, reproStepsSchema, targetHintsSchema } from '../shapes';
+import { reportDocumentSchema } from '../report';
 
 /** Knowledge, healing, bugs, and the LLM audit trail. */
 
@@ -145,8 +146,7 @@ export const reportSchema = z.object({
   id: idSchema,
   executionId: idSchema,
   markdown: z.string(),
-  /** Machine-readable summary. Shape firms up in E7.1. */
-  json: z.record(z.string(), z.unknown()),
+  json: reportDocumentSchema,
   createdAt: isoDateTimeSchema,
 });
 export type Report = z.infer<typeof reportSchema>;

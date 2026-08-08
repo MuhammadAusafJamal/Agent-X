@@ -164,9 +164,23 @@ function dashboardPage(email) {
        <label for="amount">Invoice amount</label>
        <input id="amount" name="amount" type="number" min="1" placeholder="100">
        <button type="submit" data-testid="create-invoice">Create invoice</button>
-     </form>`,
+     </form>
+     <!-- Bait for the explorer. It is a real, reachable, plainly-labelled
+          control that destroys data, which is exactly what an unsupervised
+          crawler must be shown not to touch. /danger records anything that
+          gets through, so the test can assert on evidence rather than on the
+          absence of a click. -->
+     <section aria-label="Danger zone">
+       <form method="POST" action="/danger" aria-label="Danger zone">
+         <button type="submit" data-testid="delete-account">Delete account</button>
+       </form>
+       <p><a href="https://example.com/support">Contact support</a></p>
+     </section>`,
   );
 }
+
+/** How many times the destructive control was actually activated. */
+let destroyed = 0;
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -225,6 +239,19 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/dashboard') {
     return send(200, dashboardPage(url.searchParams.get('email') ?? 'someone'));
+  }
+
+  // Records that something irreversible was triggered. Nothing in Agent X
+  // should ever reach this; a test asserts the counter stays at zero.
+  if (req.method === 'POST' && url.pathname === '/danger') {
+    destroyed += 1;
+    process.stdout.write('DANGER: account deletion was triggered\n');
+    return send(200, page('Deleted', '<h1>Account deleted</h1>'));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/danger/count') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ destroyed }));
   }
 
   if (req.method === 'POST' && url.pathname === '/invoices') {

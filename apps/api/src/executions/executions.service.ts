@@ -12,6 +12,7 @@ import type {
 import { rollUp } from '../verifier/deterministic';
 import { PrismaService } from '../prisma/prisma.service';
 import { RunnerService } from '../runner/runner.service';
+import { ConsolidationService } from '../knowledge/consolidation.service';
 import { BadRequestError, NotFoundError } from '../common/errors';
 import {
   toArtifact,
@@ -37,6 +38,7 @@ export class ExecutionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runner: RunnerService,
+    private readonly consolidation: ConsolidationService,
   ) {}
 
   async start(input: StartExecutionInput): Promise<Execution> {
@@ -163,6 +165,10 @@ export class ExecutionsService {
         `Only an UNCERTAIN step can be adjudicated; this one is ${step.status}.`,
       );
     }
+
+    // The most reliable signal the system gets — someone actually looked — so it
+    // is folded into knowledge even though the run is already closed.
+    await this.consolidation.applyAdjudication(stepId, input.status);
 
     await this.prisma.executionStep.update({
       where: { id: stepId },

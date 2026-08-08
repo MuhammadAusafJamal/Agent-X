@@ -19,5 +19,7 @@ export * from './events';
 export * from './recorder';
 export * from './compiler';
 export * from './agent';
+export * from './explorer';
+export * from './report';
 export * from './domain';
 export * from './dto';

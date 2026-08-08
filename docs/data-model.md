@@ -142,6 +142,7 @@ JSON-bearing columns are marked **`json`** in the tables below. Enum-backed colu
 | `cancelRequested` | Boolean | cooperative cancellation flag |
 | `summary` | String? | one-line roll-up |
 | `error` | String? | |
+| `consolidatedAt` | DateTime? | when this run's lessons were folded into knowledge. Set once — what makes re-consolidating a no-op rather than a way to inflate confidence by replaying history |
 
 **ExecutionStep** — the per-step record, and the training signal for the resolver.
 
@@ -259,8 +260,10 @@ JSON-bearing columns are marked **`json`** in the tables below. Enum-backed colu
 | --- | --- | --- |
 | `id` | String | cuid, PK |
 | `executionId` | String | FK, **unique** |
-| `markdown` | String | |
-| `json` | String **json** | machine-readable summary |
+| `markdown` | String | volatile header, then a marker, then the comparable body |
+| `json` | String **json** | `ReportDocument` — `{ run, body }` |
+
+Both fields are a cache of a pure function over rows that no longer change, so regenerating is free and idempotent. The `run` / `body` split is the format's whole design: **`body` is deterministic**, so two runs of an unchanged application produce identical bytes and reports can be diffed. Anything that legitimately differs between two identical runs — the id, the clock, the duration, the token spend — lives in `run`, where nobody expects it to be stable. Keeping that honest is why the body carries no cuids, no timestamps, and only run-relative evidence paths.
 
 ## Enum values
 

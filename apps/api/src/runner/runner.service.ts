@@ -35,6 +35,8 @@ import { ResolverService } from '../resolver/resolver.service';
 import { VerifierService } from '../verifier/verifier.service';
 import { rollUp } from '../verifier/deterministic';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { ConsolidationService } from '../knowledge/consolidation.service';
+import { ReportsService } from '../reports/reports.service';
 import { stepKey } from '../resolver/step-key';
 import {
   CredentialsService,
@@ -125,6 +127,8 @@ export class RunnerService {
     private readonly diagnoser: DiagnoserService,
     private readonly healer: HealerService,
     private readonly bugs: BugReporterService,
+    private readonly consolidation: ConsolidationService,
+    private readonly reports: ReportsService,
   ) {}
 
   async run(executionId: string, hooks: RunHooks): Promise<void> {
@@ -309,7 +313,6 @@ export class RunnerService {
     let strategy: string | null = null;
     let candidateCount: number | null = null;
     let confidence: number | null = null;
-    let learnedKey: string | null = null;
     let learnedHints: TargetHints | null = null;
     // Set when the step never found what it was looking for, which is a
     // different kind of failure from one where the action ran and the outcome
@@ -323,15 +326,15 @@ export class RunnerService {
       action = actionTypeSchema.parse(step.action);
 
       if (NEEDS_TARGET.has(action)) {
-        const key = stepKey({
-          action,
-          intent: step.intent,
-          targetDescription: step.targetDescription,
-        });
-        learnedKey = key;
-
         // Rung 1: what worked last time, if it is still trusted.
-        const remembered = await this.knowledge.recall(applicationId, key);
+        const remembered = await this.knowledge.recall(
+          applicationId,
+          stepKey({
+            action,
+            intent: step.intent,
+            targetDescription: step.targetDescription,
+          }),
+        );
 
         const resolution = await this.resolver.resolve(page, hints, {
           timeoutMs: STEP_TIMEOUT_MS / 2,
@@ -349,27 +352,14 @@ export class RunnerService {
         });
 
         if (!resolution.ok) {
-          if (remembered !== null) {
-            await this.knowledge.forgetIfWrong(applicationId, key);
-          }
           unresolvedTarget = true;
           throw new Error(resolution.message);
         }
 
-        // A remembered selector that did not win has gone stale.
-        if (remembered !== null && resolution.strategy !== 'KNOWLEDGE') {
-          await this.knowledge.forgetIfWrong(applicationId, key);
-        }
-
-        // Learned on every success, not only the interesting ones: that is what
-        // makes the *second* run of a spec take rung 1 and spend nothing.
-        await this.knowledge.remember(
-          applicationId,
-          key,
-          resolution.selector,
-          resolution.strategy,
-        );
-
+        // Nothing is written to knowledge here. What this step taught is
+        // decided once, after the run, by the consolidation pass — because what
+        // a resolution was worth depends on whether the step then *verified*,
+        // and that is not known yet.
         locator = resolution.locator;
         resolvedSelector = resolution.selector;
         strategy = resolution.strategy;
@@ -419,18 +409,6 @@ export class RunnerService {
 
       status = verdict.status;
       rationale = verdict.rationale;
-
-      // Resolution succeeding is not the same as having found the right
-      // element. If a remembered selector led to a step that then failed
-      // verification, that memory is what took us there — decay it, or rung 1
-      // will confidently repeat the mistake on every future run.
-      if (
-        status === 'FAIL' &&
-        strategy === 'KNOWLEDGE' &&
-        learnedKey !== null
-      ) {
-        await this.knowledge.forgetIfWrong(applicationId, learnedKey);
-      }
     }
 
     // Evidence of a failure is captured before anything reacts to it. A heal is
@@ -1176,6 +1154,27 @@ export class RunnerService {
         error: extra.error ?? null,
       },
     });
+
+    // Both are free — no model, no browser — and both read rows that will not
+    // change again. Doing them here means a finished run is complete: what it
+    // learned is folded in, and there is a report to read.
+    await this.consolidation
+      .consolidate(executionId)
+      .catch((error: unknown) =>
+        this.logger.error(
+          `Could not consolidate knowledge for ${executionId}`,
+          error as Error,
+        ),
+      );
+
+    await this.reports
+      .generate(executionId)
+      .catch((error: unknown) =>
+        this.logger.error(
+          `Could not write a report for ${executionId}`,
+          error as Error,
+        ),
+      );
 
     hooks.emit({
       type: 'execution.finished',

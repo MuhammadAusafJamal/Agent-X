@@ -52,7 +52,7 @@ The runner concludes `FLAKE` itself, from **one reverification after a settle** 
 - [x] `FLAKE` is never returned without a passing retry as evidence — the schema handed to the model cannot express it, which is asserted directly.
 - [x] Every deterministic diagnosis carries a rationale quoting the observation behind it — the method, URL, and status that produced it.
 - [x] A step's diagnosis and its rationale are stored on the `ExecutionStep` and shown next to the evidence on the run view. A classification nobody can audit is one people learn to ignore.
-- [ ] **A renamed control classifies as `TEST_DRIFT`** — the *routing* is proven end to end, but with the model stubbed. Whether a live model classifies a rename correctly has not been verified by hand, unlike E5.3's resolution demo. This is the one claim in the phase resting on the prompt rather than on a test.
+- [x] **A renamed control classifies as `TEST_DRIFT`** — verified against `claude-sonnet-5` in Phase 7: a redesigned form whose submit button was renamed and duplicated was classified `TEST_DRIFT`, healed with a landmark, and reverified. See [phase 7](phase-7-reports.md#verified-against-the-live-model).
 
 ---
 
@@ -155,4 +155,4 @@ If the model is unreachable or out of budget, the report is still filed from a p
 - **A version diff view.** Deferred from E2.5 and expected to land here. The queue shows the original target against the proposed one, which is the diff that matters for a heal, but comparing two whole versions still means reading two pages.
 - **Evidence retention.** Still unbuilt, and now growing faster: a healed step writes a second screenshot.
 - **`ENVIRONMENT` and `UNKNOWN` have no destination.** They are recorded on the step and shown on the run, but nothing routes them anywhere a person would look, the way drift has a queue and a defect has a tracker.
-- **Live-model verification.** Unlike Phase 5, whose resolution demo was run by hand against `claude-sonnet-5` and recorded here, every Phase 6 test stubs the model. The wiring is proven; the prompts are not.
+- ~~**Live-model verification.**~~ Closed in Phase 7: the diagnose → heal → reverify → approve → cheaper-rerun loop was run by hand against `claude-sonnet-5`. Every Phase 6 *test* still stubs the model, which is the right place for a test to sit — the live run is recorded in [phase 7](phase-7-reports.md#verified-against-the-live-model).

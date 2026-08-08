@@ -116,6 +116,12 @@ export function ExecutionDetail({ executionId }: { executionId: string }) {
         <div className="flex items-center gap-3">
           <StatusBadge status={execution.status} />
 
+          {isRunning ? null : (
+            <Button size="sm" variant="outline" asChild>
+              <Link href={`/executions/${executionId}/report`}>Report</Link>
+            </Button>
+          )}
+
           {isRunning ? (
             <Button
               size="sm"

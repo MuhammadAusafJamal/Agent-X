@@ -25,7 +25,10 @@ Run from the repo root.
 | `npm run typecheck` | All workspaces |
 | `npm run lint` | All workspaces (`--fix` on the api) |
 | `npm test` | Unit tests, all workspaces |
-| `npm run db:migrate` | Creates/updates `data/agentx.db` |
+| `npm run demo` | Migrates, seeds, then starts the example app + API + dashboard together |
+| `npm run demo:setup` | Just the migrate-and-seed half |
+| `npm run db:migrate` | Creates/updates the database (interactive; `db:deploy` for the non-interactive form) |
+| `npm run db:seed` | Project, application, environment, and one recorded spec — idempotent |
 | `npm run db:studio` | Prisma Studio |
 | `npm run db:generate` | Regenerates the Prisma client after a schema change |
 | `npm run db:reset` | Drops and recreates the database |

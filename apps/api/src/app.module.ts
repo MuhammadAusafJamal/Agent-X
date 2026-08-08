@@ -16,6 +16,7 @@ import { EnvironmentsModule } from './environments/environments.module';
 import { AgentModule } from './agent/agent.module';
 import { BugsModule } from './bugs/bugs.module';
 import { HealingsModule } from './healings/healings.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { HealingsModule } from './healings/healings.module';
     AgentModule,
     BugsModule,
     HealingsModule,
+    ReportsModule,
     ExecutionsModule,
   ],
 })

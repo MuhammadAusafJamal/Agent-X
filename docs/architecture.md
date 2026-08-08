@@ -53,7 +53,10 @@ apps/api (NestJS)
 | **Verifier** | `PASS` / `FAIL` / `UNCERTAIN` for a step | What to do about a `FAIL` |
 | **Diagnoser** | Classifying a failure's cause | Fixing it |
 | **Healer** | Proposing a corrected step and reverifying it | Approving the change into a spec version |
-| **Knowledge** | What we have learned about an application | Anything execution-time |
+| **Explorer** | Walking an application unscripted, within hard bounds, and proposing specs | Deciding a proposal is a test worth trusting |
+| **Knowledge** | What we have learned about an application | Deciding what a run taught — that is consolidation's, after the fact |
+| **Consolidation** | Folding a finished run's lessons into knowledge, once | Anything during the run |
+| **Reports** | Writing a run down so it can be read and diffed | Judging it |
 
 ## Key flows
 
@@ -108,6 +111,35 @@ Diagnoser classifies: APP_BUG | TEST_DRIFT | ENVIRONMENT | UNKNOWN
 The asymmetry is the point: the system heals its own drift, but it never heals over a real defect in the application under test. That gate is an early return in `HealerService.propose`, not an instruction in a prompt.
 
 **Approval writes a new `TestVersion`.** The healer changes what a *run* did; only a human changes what the *specification* says.
+
+### Run → what it leaves behind
+
+```
+run finishes
+   → consolidate: fold each step's lesson into knowledge, once
+      PASS / HEALED → confirm the target that worked
+      FAIL          → decay whatever memory led there
+      UNCERTAIN     → nothing, until a human settles it
+   → report: markdown + json, deterministic body, generated free
+```
+
+Both are pure functions over rows that will not change again, which is what lets them run unconditionally and be re-run safely. Nothing during a run writes to knowledge: what a resolution was worth depends on whether the step then *verified*, and that is not known yet.
+
+### Explore → proposed specification
+
+```
+loop, until a bound stops it:
+   snapshot → model names one move → REFUSE or allow
+      off-origin?          refuse
+      destructive control? refuse
+      budget spent?        stop
+   → act → record the move only if it actually worked
+
+→ propose a TestSpec, source: EXPLORED, from the moves that succeeded
+→ record the journey as FLOW knowledge
+```
+
+The explorer is the only component that acts without a human having scripted the move, so its bounds are pure functions applied **before** the model's answer reaches a locator — not instructions in its prompt.
 
 ## Action Resolver ladder
 

@@ -21,7 +21,11 @@
     "db:studio": "npm run db:studio --workspace @agentx/api",
     "db:reset": "npm run db:reset --workspace @agentx/api",
     "demo:app": "node examples/demo-app/server.js",
-    "playwright:install": "playwright install chromium"
+    "playwright:install": "playwright install chromium",
+    "db:seed": "npm run db:seed --workspace @agentx/api",
+    "db:deploy": "npm run db:deploy --workspace @agentx/api",
+    "demo:setup": "npm run db:deploy && npm run db:seed",
+    "demo": "npm run demo:setup && cross-env DEMO_APP_USER=demo@example.com DEMO_APP_PASSWORD=hunter2 concurrently -n demo,api,web -c yellow,cyan,magenta \"npm:demo:app\" \"npm:dev:api\" \"npm:dev:web\""
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
