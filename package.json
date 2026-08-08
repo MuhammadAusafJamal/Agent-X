@@ -1,0 +1,24 @@
+{
+  "name": "agent-x",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent X - automated QA testing tool",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @agentx/web",
+    "dev:api": "npm run start:dev --workspace @agentx/api",
+    "build": "npm run build --workspace @agentx/api && npm run build --workspace @agentx/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "playwright:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
