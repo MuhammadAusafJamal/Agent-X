@@ -7,7 +7,7 @@ Nine phases. Each ends at something demoable, so if the clock runs out mid-plan 
 | [0 — Foundation](phases/phase-0-foundation.md) | Both apps boot against a real schema and share one typed contract | `npm run dev` serves a dashboard wired to a live API and database | **`DONE`** |
 | [1 — Catalog](phases/phase-1-catalog.md) | Somewhere to hang tests | Create project → application → environment | **`DONE`** |
 | [2 — Recorder](phases/phase-2-recorder.md) | The headline input path | Record a login by hand; watch it become an editable English spec | **`DONE`** (compiler needs a real API key to verify) |
-| [3 — Execution](phases/phase-3-execution.md) | Specs run and produce evidence | Replay that login end to end with a downloadable trace | `TODO` |
+| [3 — Execution](phases/phase-3-execution.md) | Specs run and produce evidence | Replay that login end to end with a downloadable trace | **`DONE`** |
 | [4 — Verification](phases/phase-4-verification.md) | A run means something | A broken step reports FAIL with the evidence that proves it | `TODO` |
 | [5 — Agent](phases/phase-5-agent.md) | The intelligence layer | Rename a button; the agent still finds it, and remembers | `TODO` |
 | [6 — Heal](phases/phase-6-heal.md) | Close the loop | Move a field → self-heal. Break logic → file a bug instead | `TODO` |

@@ -99,5 +99,5 @@ Small phase, and deliberately so. It exists because every later phase needs an `
 - [x] The environment stores `{"usernameEnv":"DEMO_USER","passwordEnv":"DEMO_PASSWORD","extra":{}}` — verified by reading the SQLite row directly. `DEMO_USER` was set to `demo@example.com` in the API process at the time; that value appears nowhere in the database.
 - [x] An unset variable is reported before anything runs: the UI showed ✓ `DEMO_USER` / ✗ `DEMO_PASSWORD`, and `resolve()` throws naming the missing variables.
 - [x] The credential status response contains no values — asserted in both the unit test and the e2e.
-- [ ] A grep of `data/evidence/` after a login run finds no credential value — **deferred to Phase 3**, which is when evidence files first exist. The `Redactor` they will use is built and unit-tested.
+- [x] A grep of `data/evidence/` after a login run finds no credential value — **closed in Phase 3**, and it caught a real leak: Playwright's ARIA snapshot reports a password field's value, which was reaching disk unredacted. See E3.1.
 - [ ] Credential values do not appear in any `LlmCall` prompt payload — **deferred to Phase 5**, same reason.

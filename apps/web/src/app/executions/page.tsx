@@ -1,11 +1,5 @@
-import { PhasePlaceholder } from "@/components/phase-placeholder";
+import { ExecutionsList } from "./executions-list";
 
 export default function ExecutionsPage() {
-  return (
-    <PhasePlaceholder
-      title="Runs"
-      phase="Phase 3 — Execution"
-      description="Live step timelines over SSE, per-step evidence, and downloadable Playwright traces."
-    />
-  );
+  return <ExecutionsList />;
 }

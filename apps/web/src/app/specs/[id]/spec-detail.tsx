@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { RunSpecDialog } from "@/components/executions/run-spec-dialog";
 import { ExpectationEditor } from "@/components/specs/expectation-editor";
 import { EmptyState, ErrorBanner, Loading } from "@/components/ui-bits";
 import { apiFetch } from "@/lib/api";
@@ -147,14 +148,21 @@ export function SpecDetail({ specId }: { specId: string }) {
               </Button>
             </>
           ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDraft(steps)}
-              disabled={steps.length === 0}
-            >
-              Edit
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDraft(steps)}
+                disabled={steps.length === 0}
+              >
+                Edit
+              </Button>
+              <RunSpecDialog
+                specId={spec.id}
+                applicationId={spec.applicationId}
+                disabled={steps.length === 0}
+              />
+            </>
           )}
         </div>
       </div>

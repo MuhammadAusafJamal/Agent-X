@@ -8,6 +8,7 @@ import { LlmModule } from './llm/llm.module';
 import { RecorderModule } from './recorder/recorder.module';
 import { SpecsModule } from './specs/specs.module';
 import { CompilerModule } from './compiler/compiler.module';
+import { ExecutionsModule } from './executions/executions.module';
 import { ProjectsModule } from './projects/projects.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { EnvironmentsModule } from './environments/environments.module';
@@ -26,6 +27,7 @@ import { EnvironmentsModule } from './environments/environments.module';
     RecorderModule,
     SpecsModule,
     CompilerModule,
+    ExecutionsModule,
   ],
 })
 export class AppModule {}
