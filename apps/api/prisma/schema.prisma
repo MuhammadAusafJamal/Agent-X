@@ -1,0 +1,489 @@
+// Agent X data model. The prose version, with field-level rationale, is in
+// docs/data-model.md — keep the two in step.
+//
+// Two SQLite constraints shape this whole file:
+//
+//   1. Prisma supports no `enum` on SQLite. Every enum-typed field below is a
+//      String. The allowed values live in @agentx/shared as zod enums, and
+//      enums.spec.ts guards the lists. The database will accept garbage in
+//      these columns; the shared schemas are what stop it.
+//
+//   2. Prisma has no `Json` type on SQLite. Fields marked `-- json` are String
+//      columns holding JSON, read and written only through parseJson /
+//      stringifyJson. A bare `JSON.parse(x) as T` anywhere is a bug.
+
+// Prisma 7 emits TypeScript source rather than a compiled client, so the output
+// has to live under src/ — anywhere else and tsc's inferred rootDir climbs to
+// the workspace root, moving the build output from dist/main.js to
+// dist/src/main.js and breaking `start:prod`.
+// NestJS compiles to CommonJS, and the generator defaults to ESM output —
+// `import.meta.url` and `./foo.js` specifiers, which a CJS build cannot load.
+// moduleFormat/importFileExtension pin the generated client to match the app.
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  applications Application[]
+}
+
+model Application {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  baseUrl     String
+  /// Domain context fed to the LLM, e.g. "a B2B invoicing app".
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environments Environment[]
+  recordings   Recording[]
+  specs        TestSpec[]
+  knowledge    KnowledgeItem[]
+
+  @@index([projectId])
+}
+
+model Environment {
+  id             String @id @default(cuid())
+  applicationId  String
+  name           String
+  baseUrl        String
+  /// -- json CredentialRefs. Environment variable NAMES, never values.
+  credentialRefs String @default("{\"extra\":{}}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  recordings  Recording[]
+  executions  Execution[]
+
+  @@index([applicationId])
+}
+
+// ---------------------------------------------------------------------------
+// Recording
+// ---------------------------------------------------------------------------
+
+model Recording {
+  id            String    @id @default(cuid())
+  applicationId String
+  environmentId String?
+  startUrl      String
+  /// -- enum RecordingStatus
+  status        String
+  startedAt     DateTime  @default(now())
+  stoppedAt     DateTime?
+  error         String?
+
+  application Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  environment Environment?   @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  events      RecordedEvent[]
+  versions    TestVersion[]
+  artifacts   Artifact[]
+  llmCalls    LlmCall[]
+
+  @@index([applicationId])
+}
+
+/// One captured human action, with the context that makes it interpretable.
+/// The role/name/text/landmark fields are the point; selector candidates are
+/// only fallbacks.
+model RecordedEvent {
+  id          String   @id @default(cuid())
+  recordingId String
+  index       Int
+  /// -- enum RecordedEventType
+  type        String
+  url         String
+  timestamp   DateTime
+
+  /// Typed text or selected option. Null when it came from a password field.
+  value        String?
+  /// True when the value came from a password field. The value itself is never
+  /// stored; this flag is what lets the compiler emit a credential reference
+  /// instead of guessing from the field's name.
+  isSecret     Boolean @default(false)
+  targetRole   String?
+  targetName   String?
+  targetText   String?
+  targetTestId String?
+  /// Enclosing landmark — separates "Save in the toolbar" from "Save in the dialog".
+  landmark     String?
+  /// -- json BBox
+  bbox         String?
+  /// -- json SelectorCandidate[]
+  selectorCandidates String @default("[]")
+  /// Artifact relative paths.
+  a11yRef      String?
+  screenshotRef String?
+
+  recording Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  @@unique([recordingId, index])
+  @@index([recordingId])
+}
+
+// ---------------------------------------------------------------------------
+// Specification
+// ---------------------------------------------------------------------------
+
+model TestSpec {
+  id            String   @id @default(cuid())
+  applicationId String
+  name          String
+  description   String?
+  /// -- enum SpecSource
+  source        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  /// Plain column, deliberately not a foreign key: a FK here would form a cycle
+  /// with TestVersion.specId and make cascade deletes order-dependent. The
+  /// service layer keeps it pointing at a real version.
+  currentVersionId String?
+
+  application Application   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  versions    TestVersion[]
+  executions  Execution[]
+
+  @@index([applicationId])
+}
+
+/// Immutable. Editing a spec or approving a heal writes a new version — that is
+/// what makes an automated change to a test auditable and reversible.
+model TestVersion {
+  id          String   @id @default(cuid())
+  specId      String
+  version     Int
+  /// -- enum SpecSource — how this version came to exist
+  source      String
+  /// e.g. "healed: login button renamed"
+  note        String?
+  recordingId String?
+  createdAt   DateTime @default(now())
+
+  spec       TestSpec   @relation(fields: [specId], references: [id], onDelete: Cascade)
+  recording  Recording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+  steps      TestStep[]
+  executions Execution[]
+
+  healingsForVersion HealingRecord[] @relation("HealingSpecVersion")
+  healingsApplied    HealingRecord[] @relation("HealingAppliedVersion")
+
+  @@unique([specId, version])
+  @@index([specId])
+}
+
+/// One intent, not one selector.
+model TestStep {
+  id        String @id @default(cuid())
+  versionId String
+  index     Int
+  /// Human-readable: "sign in as the seeded user".
+  intent    String
+  /// -- enum ActionType
+  action    String
+  /// Natural language: "the primary submit button in the login form".
+  targetDescription String?
+  /// -- json TargetHints — fallbacks, not the primary key
+  targetHints       String  @default("{\"selectorCandidates\":[]}")
+  /// -- json StepData — a literal, or an env-var reference for anything secret
+  data              String?
+  /// -- json Expectation
+  expectation       String
+  /// A failure here does not fail the run, but is still surfaced.
+  optional          Boolean @default(false)
+
+  version        TestVersion     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  executionSteps ExecutionStep[]
+
+  @@unique([versionId, index])
+  @@index([versionId])
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+model Execution {
+  id            String    @id @default(cuid())
+  specId        String
+  versionId     String
+  environmentId String
+  /// -- enum ExecutionMode
+  mode          String
+  /// -- enum ExecutionStatus
+  status        String
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  /// Cooperative cancellation flag, checked at every step boundary.
+  cancelRequested Boolean @default(false)
+  summary       String?
+  error         String?
+  /// When this run's lessons were folded into application knowledge. Set once;
+  /// what makes consolidating the same run twice a no-op rather than a way to
+  /// inflate confidence by re-reading history.
+  consolidatedAt DateTime?
+
+  spec        TestSpec    @relation(fields: [specId], references: [id], onDelete: Cascade)
+  version     TestVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  steps     ExecutionStep[]
+  artifacts Artifact[]
+  llmCalls  LlmCall[]
+  bugs      BugReport[]
+  report    Report?
+
+  @@index([specId])
+  @@index([versionId])
+  @@index([environmentId])
+  @@index([status])
+}
+
+model ExecutionStep {
+  id          String  @id @default(cuid())
+  executionId String
+  /// Null for steps an agent invented — explore mode, or a healed replacement.
+  stepId      String?
+  index       Int
+  /// Denormalized so a run still reads standalone once the spec moves on.
+  intent      String
+  /// -- enum ActionType
+  action      String
+  /// -- enum StepStatus
+  status      String
+
+  /// Which rung of the ladder won, and how ambiguous the lookup was. This is the
+  /// feedback signal the intelligence layer reads, not just a diagnostic.
+  /// -- enum ResolutionStrategy
+  resolutionStrategy String?
+  resolvedSelector   String?
+  candidateCount     Int?
+  confidence         Float?
+
+  attempts          Int       @default(0)
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  durationMs        Int?
+  verifierRationale String?
+  error             String?
+
+  /// Why it failed, when it did. Null on a step that never failed.
+  /// -- enum Diagnosis
+  diagnosis          String?
+  /// The observation the diagnosis rests on. Kept next to the step because a
+  /// classification a human cannot audit is one they will learn to ignore.
+  diagnosisRationale String?
+
+  execution    Execution       @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  step         TestStep?       @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  observations Observation[]
+  artifacts    Artifact[]
+  healings     HealingRecord[]
+  bugs         BugReport[]
+
+  @@unique([executionId, index])
+  @@index([executionId])
+  @@index([stepId])
+}
+
+/// What the page looked like around a step. Large bodies live in Artifact; this
+/// payload holds only the small inline data.
+model Observation {
+  id              String   @id @default(cuid())
+  executionStepId String
+  /// -- enum ObservationKind
+  kind            String
+  /// -- json ObservationPayload
+  payload         String
+  artifactId      String?
+  createdAt       DateTime @default(now())
+
+  executionStep ExecutionStep @relation(fields: [executionStepId], references: [id], onDelete: Cascade)
+  artifact      Artifact?     @relation(fields: [artifactId], references: [id], onDelete: SetNull)
+
+  @@index([executionStepId])
+}
+
+/// A file on disk. `relPath` is relative to EVIDENCE_DIR so the tree stays
+/// portable — moving or zipping evidence must not require rewriting the database.
+model Artifact {
+  id              String   @id @default(cuid())
+  executionId     String?
+  recordingId     String?
+  executionStepId String?
+  /// -- enum ArtifactKind
+  kind            String
+  relPath         String
+  bytes           Int?
+  createdAt       DateTime @default(now())
+
+  execution     Execution?     @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  recording     Recording?     @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  executionStep ExecutionStep? @relation(fields: [executionStepId], references: [id], onDelete: Cascade)
+  observations  Observation[]
+
+  @@index([executionId])
+  @@index([recordingId])
+  @@index([executionStepId])
+}
+
+// ---------------------------------------------------------------------------
+// Intelligence
+// ---------------------------------------------------------------------------
+
+model KnowledgeItem {
+  id            String @id @default(cuid())
+  applicationId String
+  /// -- enum KnowledgeKind
+  kind          String
+  /// Stable lookup key, e.g. `login.submit`.
+  key           String
+  /// -- json KnowledgeValue
+  value         String
+
+  /// Rises on a hit, decays on a miss and with age. Below the floor an entry
+  /// stops being injected into prompts and stops being trusted at rung 1 —
+  /// stale knowledge sends the resolver confidently at the wrong element.
+  confidence Float    @default(0.5)
+  hitCount   Int      @default(0)
+  missCount  Int      @default(0)
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, kind, key])
+  @@index([applicationId])
+}
+
+model HealingRecord {
+  id              String @id @default(cuid())
+  executionStepId String
+  /// The version that drifted.
+  specVersionId   String
+  /// -- enum Diagnosis
+  diagnosis       String
+  /// -- json TargetHints
+  originalTarget  String
+  /// -- json TargetHints
+  proposedTarget  String
+  /// The repaired natural-language description. Null leaves the original in
+  /// place — a renamed button rarely needs "the primary submit button in the
+  /// sign-in form" rewritten, but a control that moved usually does.
+  proposedDescription String?
+  rationale       String
+  /// -- enum HealingStatus
+  status          String
+  /// -- enum StepStatus — result of the in-run reverify. A heal that cannot
+  /// prove itself is recorded, not applied.
+  reverifyStatus  String?
+  /// The new version that approval produced.
+  appliedToVersionId String?
+
+  createdAt  DateTime  @default(now())
+  reviewedAt DateTime?
+
+  executionStep     ExecutionStep @relation(fields: [executionStepId], references: [id], onDelete: Cascade)
+  specVersion       TestVersion   @relation("HealingSpecVersion", fields: [specVersionId], references: [id], onDelete: Cascade)
+  appliedToVersion  TestVersion?  @relation("HealingAppliedVersion", fields: [appliedToVersionId], references: [id], onDelete: SetNull)
+
+  @@index([executionStepId])
+  @@index([specVersionId])
+  @@index([status])
+}
+
+model BugReport {
+  id              String  @id @default(cuid())
+  executionId     String
+  executionStepId String?
+  title           String
+  /// -- enum Severity
+  severity        String
+  summary         String
+  /// -- json string[] — taken from the steps that actually executed
+  reproSteps      String
+  expected        String
+  actual          String
+  /// -- json string[] of Artifact ids
+  evidenceRefs    String  @default("[]")
+  /// -- enum BugStatus
+  status          String
+
+  /// Deterministic identity of the defect: the spec, the step, and the signal
+  /// that produced it. What makes the same defect recurring across runs update
+  /// the open report rather than file a twin of it.
+  fingerprint String
+  /// Raised on each recurrence. One bug seen thirty times, not thirty bugs.
+  occurrences Int      @default(1)
+  lastSeenAt  DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  execution     Execution      @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  executionStep ExecutionStep? @relation(fields: [executionStepId], references: [id], onDelete: SetNull)
+
+  @@index([executionId])
+  @@index([status])
+  @@index([fingerprint])
+}
+
+/// One model call. Enough to reconstruct, after the fact, which prompt version
+/// produced which decision in a run.
+model LlmCall {
+  id            String  @id @default(cuid())
+  executionId   String?
+  recordingId   String?
+  promptId      String
+  promptVersion Int
+  model         String
+  inputTokens   Int
+  outputTokens  Int
+  latencyMs     Int
+  costUsd       Float?
+  ok            Boolean
+  error         String?
+
+  createdAt DateTime @default(now())
+
+  execution Execution? @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  recording Recording? @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  @@index([executionId])
+  @@index([recordingId])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  executionId String   @unique
+  markdown    String
+  /// -- json report summary
+  json        String
+  createdAt   DateTime @default(now())
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+}

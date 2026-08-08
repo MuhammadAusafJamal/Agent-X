@@ -4,18 +4,32 @@
   "private": true,
   "description": "Agent X - automated QA testing tool",
   "workspaces": [
+    "packages/*",
     "apps/*"
   ],
   "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "npm run dev --workspace @agentx/web",
     "dev:api": "npm run start:dev --workspace @agentx/api",
-    "build": "npm run build --workspace @agentx/api && npm run build --workspace @agentx/web",
+    "dev:shared": "npm run dev --workspace @agentx/shared",
+    "build": "npm run build --workspace @agentx/shared && npm run build --workspace @agentx/api && npm run build --workspace @agentx/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "playwright:install": "playwright install chromium"
+    "db:generate": "npm run db:generate --workspace @agentx/api",
+    "db:migrate": "npm run db:migrate --workspace @agentx/api",
+    "db:studio": "npm run db:studio --workspace @agentx/api",
+    "db:reset": "npm run db:reset --workspace @agentx/api",
+    "demo:app": "node examples/demo-app/server.js",
+    "playwright:install": "playwright install chromium",
+    "db:seed": "npm run db:seed --workspace @agentx/api",
+    "db:deploy": "npm run db:deploy --workspace @agentx/api",
+    "demo:setup": "npm run db:deploy && npm run db:seed",
+    "demo": "npm run demo:setup && cross-env DEMO_APP_USER=demo@example.com DEMO_APP_PASSWORD=hunter2 concurrently -n demo,api,web -c yellow,cyan,magenta \"npm:demo:app\" \"npm:dev:api\" \"npm:dev:web\""
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "concurrently": "^10.0.4",
     "typescript": "^5.7.3"
   },
   "engines": {

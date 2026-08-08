@@ -1,0 +1,10 @@
+{
+  "comment": "ts-node runs the seed directly. The app is built as nodenext ESM-resolution; a standalone script is simpler to run as plain CommonJS, and this keeps that override out of the app's own config.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": true
+  },
+  "include": ["seed.ts"]
+}

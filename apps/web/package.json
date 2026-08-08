@@ -6,13 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@agentx/shared": "*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dexie": "^4.0.11",
-    "dexie-react-hooks": "^1.1.7",
     "lucide-react": "^1.30.0",
     "next": "16.3.0",
     "radix-ui": "^1.6.7",
@@ -20,7 +20,8 @@
     "react-dom": "19.2.8",
     "shadcn": "^4.16.2",
     "tailwind-merge": "^3.6.0",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
