@@ -1,0 +1,15 @@
+# Local, machine-specific Claude Code config (absolute paths, personal hooks)
+.claude/settings.local.json
+
+# Graphify output
+graphify-out/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies / build output
+node_modules/
+dist/
+build/

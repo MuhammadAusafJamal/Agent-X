@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Shell scripts must keep LF — bash fails on CRLF ("$'\r': command not found")
+*.sh text eol=lf
