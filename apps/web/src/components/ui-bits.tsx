@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /** Small shared pieces, so every catalog screen fails and empties the same way. */
 
@@ -7,6 +9,59 @@ export function ErrorBanner({ message }: { message: string }) {
   return (
     <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-4 py-3 text-sm">
       {message}
+    </div>
+  );
+}
+
+/**
+ * A failed load, with a way out of it.
+ *
+ * The retry matters more than the styling. Without one, the only recovery from
+ * a dropped request is a full page reload, which throws away every other
+ * resource on the screen that loaded perfectly well.
+ */
+export function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="border-destructive/40 bg-destructive/10 rounded-md border px-4 py-3">
+      <p className="text-destructive text-sm">{message}</p>
+      {onRetry ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          onClick={onRetry}
+        >
+          Try again
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Placeholder rows, shaped like the table that is coming. */
+export function TableSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="space-y-2" aria-hidden>
+      {Array.from({ length: rows }, (_, index) => (
+        <Skeleton key={index} className="h-12 w-full" />
+      ))}
+    </div>
+  );
+}
+
+/** Placeholder cards, shaped like the list that is coming. */
+export function CardListSkeleton({ cards = 2 }: { cards?: number }) {
+  return (
+    <div className="space-y-3" aria-hidden>
+      {Array.from({ length: cards }, (_, index) => (
+        <Skeleton key={index} className="h-28 w-full" />
+      ))}
     </div>
   );
 }

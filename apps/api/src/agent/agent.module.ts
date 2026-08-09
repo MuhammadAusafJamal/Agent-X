@@ -13,6 +13,11 @@ import { ExplorationsController } from './explorer/explorations.controller';
  * a run where everything works never constructs a prompt here. The explorer is
  * the exception and the reason `bounds.ts` exists: it acts without a human
  * having scripted the moves.
+ *
+ * The feature check lives in its own module rather than here, because it needs
+ * `ExecutionsService` and the runner already needs the diagnoser — importing
+ * executions from this module closes that loop. Being a consumer of both is what
+ * it actually is.
  */
 @Module({
   imports: [ResolverModule, SpecsModule],

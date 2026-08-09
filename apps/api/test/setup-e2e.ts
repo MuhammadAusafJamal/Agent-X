@@ -22,3 +22,11 @@ process.env['PLAYWRIGHT_HEADLESS'] = 'true';
 
 // Keep test evidence out of the development tree.
 process.env['EVIDENCE_DIR'] = 'data/evidence-e2e';
+
+// The boot sweep closes out runs and checks the previous process left behind,
+// which assumes one API process per database. This harness deliberately breaks
+// that assumption — jest runs up to four test files at once, each starting its
+// own app against the same file — so with it on, one suite booting errors the
+// runs another suite has in flight. `restart-sweep.e2e-spec.ts` turns it back on
+// against a database of its own, which is the only place the assumption holds.
+process.env['AGENTX_SWEEP_INTERRUPTED_ON_BOOT'] = 'false';

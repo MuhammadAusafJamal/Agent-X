@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /**
@@ -43,4 +44,29 @@ export function resolveDatabasePath(
 ): string {
   const url = resolveDatabaseUrl(rawUrl);
   return url.startsWith('file:') ? url.slice('file:'.length) : url;
+}
+
+/**
+ * Creates the database's parent directory if it is missing.
+ *
+ * A fresh clone has no `data/` directory, and SQLite will not create a missing
+ * parent — it fails with an unhelpful "unable to open database file" instead.
+ * Every entry point that can be the first to touch the database calls this:
+ * `PrismaService`, the seed script, and `prisma.config.ts`, which is what the
+ * migrate commands load. Leaving it out of the last one is why `npm run
+ * db:migrate` used to be the one path that failed on a clean checkout.
+ */
+export function ensureDatabaseDir(
+  rawUrl = process.env['DATABASE_URL'],
+): string {
+  const filePath = resolveDatabasePath(rawUrl);
+
+  if (filePath.startsWith('file:') || !path.isAbsolute(filePath)) {
+    // A non-file datasource (or something we could not resolve) has no parent
+    // directory to create.
+    return filePath;
+  }
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  return filePath;
 }

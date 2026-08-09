@@ -114,12 +114,23 @@ export class RecorderService implements OnModuleDestroy {
   }
 
   private async launch(recordingId: string, startUrl: string): Promise<void> {
+    const headless = this.config.get('PLAYWRIGHT_HEADLESS');
+
     const browser = await chromium.launch({
-      headless: this.config.get('PLAYWRIGHT_HEADLESS'),
+      headless,
+      // A recording is a person using a website, so the window should be the one
+      // they would have used. It also changes what gets captured: a narrow
+      // window collapses the navigation into a hamburger menu, and the hints
+      // recorded against that menu are not the hints a full-width run resolves
+      // against.
+      args: headless ? [] : ['--start-maximized'],
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      // `--start-maximized` is ignored unless the viewport is left to the
+      // window. Headless has no window to maximize, so it keeps the fixed size
+      // the capture tests were written against.
+      viewport: headless ? { width: 1280, height: 800 } : null,
     });
 
     const session: Session = {

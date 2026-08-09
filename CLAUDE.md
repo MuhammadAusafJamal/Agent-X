@@ -25,8 +25,9 @@ Run from the repo root.
 | `npm run typecheck` | All workspaces |
 | `npm run lint` | All workspaces (`--fix` on the api) |
 | `npm test` | Unit tests, all workspaces |
+| `npm run smoke` | The happy path against the **real model**. Costs API credits; deliberately not part of `npm test` |
 | `npm run demo` | Migrates, seeds, then starts the example app + API + dashboard together |
-| `npm run demo:setup` | Just the migrate-and-seed half |
+| `npm run demo:setup` | Just the generate-migrate-and-seed half |
 | `npm run db:migrate` | Creates/updates the database (interactive; `db:deploy` for the non-interactive form) |
 | `npm run db:seed` | Project, application, environment, and one recorded spec — idempotent |
 | `npm run db:studio` | Prisma Studio |
@@ -35,9 +36,22 @@ Run from the repo root.
 | `npm run playwright:install` | Chromium for the recorder and runner |
 | `npm run test:e2e --workspace @agentx/api` | HTTP tests against a real database |
 
-First run: `npm install`, copy `.env.example` to `apps/api/.env` and set `ANTHROPIC_API_KEY`, then `npm run db:migrate && npm run dev`. The API refuses to start with an invalid environment and prints exactly which keys are wrong.
+First run, in order:
 
-Ports: dashboard 3000, API 3001.
+```bash
+npm install                     # also generates the Prisma client, via postinstall
+cp .env.example .env            # or apps/api/.env; both are loaded, apps/api wins
+# set ANTHROPIC_API_KEY in it
+npm run playwright:install      # the recorder and the runner both need Chromium
+npm run db:migrate
+npm run dev
+```
+
+`npm run playwright:install` and the Prisma client are not optional and used to be undocumented: the client is gitignored, `@prisma/client` ships no `postinstall`, and nothing in the repo compiles without it. That is why `postinstall` now runs `db:generate` — see [README.md](README.md), which is the copy of this that a stranger reads.
+
+The API refuses to start with an invalid environment and prints exactly which keys are wrong.
+
+Ports: dashboard 3000, API 3001, example app 4321.
 
 ## Architecture
 

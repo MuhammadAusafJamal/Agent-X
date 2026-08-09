@@ -2,15 +2,25 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bug, Brain, FolderTree, HeartPulse, Play } from "lucide-react";
+import {
+  Bug,
+  ClipboardCheck,
+  FolderTree,
+  HeartPulse,
+  Home,
+  Play,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import { Toaster } from "./toaster";
+import { TooltipProvider } from "./ui/tooltip";
 
 const NAV = [
-  { href: "/projects", label: "Projects", icon: FolderTree },
+  { href: "/", label: "Home", icon: Home },
+  { href: "/projects", label: "Applications", icon: FolderTree },
+  { href: "/features", label: "Feature checks", icon: ClipboardCheck },
   { href: "/executions", label: "Runs", icon: Play },
-  { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/healings", label: "Healing", icon: HeartPulse },
   { href: "/bugs", label: "Bugs", icon: Bug },
 ] as const;
@@ -19,18 +29,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   return (
+    <TooltipProvider>
     <div className="flex min-h-dvh">
       <aside className="bg-sidebar border-border hidden w-60 shrink-0 flex-col border-r md:flex">
-        <div className="border-border flex h-14 items-center gap-2 border-b px-5">
+        <Link
+          href="/"
+          className="border-border hover:bg-sidebar-accent/60 flex h-14 items-center gap-2 border-b px-5 transition-colors"
+        >
           <span className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded font-mono text-xs font-bold">
             X
           </span>
           <span className="font-heading text-sm font-semibold">Agent X</span>
-        </div>
+        </Link>
 
         <nav className="flex flex-1 flex-col gap-1 p-3">
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href || pathname.startsWith(`${href}/`);
+            // "/" would otherwise be a prefix of every route and light up
+            // permanently, so the root matches exactly and nothing else does.
+            const active =
+              href === "/"
+                ? pathname === "/"
+                : pathname === href || pathname.startsWith(`${href}/`);
 
             return (
               <Link
@@ -75,6 +94,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <main className="min-w-0 flex-1 p-6">{children}</main>
       </div>
+
+      <Toaster />
     </div>
+    </TooltipProvider>
   );
 }

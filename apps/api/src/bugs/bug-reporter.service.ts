@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   bugNarrativeSchema,
+  evidenceRefsSchema,
   reproStepsSchema,
   stringifyJson,
   type BugNarrative,
@@ -129,7 +130,11 @@ export class BugReporterService {
         ),
         expected: narrative.expected,
         actual: narrative.actual,
-        evidenceRefs: JSON.stringify(context.evidenceRefs),
+        evidenceRefs: stringifyJson(
+          evidenceRefsSchema,
+          context.evidenceRefs,
+          'BugReport.evidenceRefs',
+        ),
         status: 'OPEN',
         fingerprint,
         occurrences: 1,

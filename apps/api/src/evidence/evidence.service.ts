@@ -17,15 +17,30 @@ export class EvidenceService {
   private readonly root: string;
 
   constructor(config: TypedConfigService) {
-    // EVIDENCE_DIR is relative to the repo root, like DATABASE_URL.
-    this.root = path.resolve(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      config.get('EVIDENCE_DIR'),
-    );
+    // Four levels up from `apps/api/src/evidence` — or `apps/api/dist/evidence`
+    // once built — is the repo root, which is what a relative EVIDENCE_DIR is
+    // anchored to, exactly like DATABASE_URL.
+    const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+    this.root = path.resolve(repoRoot, config.get('EVIDENCE_DIR'));
+
+    // Logged because a misconfigured root is otherwise invisible: runs pass,
+    // evidence is written, and nobody notices it landed somewhere unexpected
+    // until they go looking for a screenshot months later.
+    this.logger.log(`Evidence root: ${this.root}`);
+
+    // The default used to be `../../data/evidence` — relative to `apps/api`,
+    // which is not what it is resolved against — so every screenshot, trace,
+    // and video landed two directories *above* the project, outside the
+    // checkout and outside `.gitignore`. The default is fixed, but an existing
+    // `.env` still carries the old value, and that file is not ours to rewrite.
+    // So the mistake announces itself rather than being discovered.
+    if (!this.root.startsWith(repoRoot + path.sep)) {
+      this.logger.warn(
+        `EVIDENCE_DIR resolves outside the repository (${this.root}). ` +
+          `If that is not deliberate, set EVIDENCE_DIR=data/evidence in your .env — ` +
+          `it is resolved against the repo root, like DATABASE_URL.`,
+      );
+    }
   }
 
   get rootDir(): string {

@@ -54,13 +54,74 @@ model Application {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  environments Environment[]
-  recordings   Recording[]
-  specs        TestSpec[]
-  knowledge    KnowledgeItem[]
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environments  Environment[]
+  recordings    Recording[]
+  specs         TestSpec[]
+  knowledge     KnowledgeItem[]
+  features      Feature[]
+  featureChecks FeatureCheck[]
 
   @@index([projectId])
+}
+
+/// A named capability of an application, and the suite generated against it.
+///
+/// Grouping exists so "run the regression suite for invoicing" is one call
+/// rather than the user assembling a list by hand each time. A feature is only a
+/// grouping: the specs under it are ordinary specs, run by the ordinary
+/// execution path, which is what makes regression, smoke, and cross-environment
+/// runs the same mechanism rather than three.
+model Feature {
+  id            String   @id @default(cuid())
+  applicationId String
+  name          String
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  application Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  specs       TestSpec[]
+  checks      FeatureCheck[]
+
+  @@unique([applicationId, name])
+  @@index([applicationId])
+}
+
+/// One criteria-driven pass over a feature.
+///
+/// Persisted rather than returned from a synchronous request because a check
+/// plans, walks the application once per case, and then starts a run per case —
+/// minutes of work that must survive a dashboard reload.
+model FeatureCheck {
+  id            String @id @default(cuid())
+  featureId     String
+  applicationId String
+  environmentId String
+  name          String
+  description   String @default("")
+
+  /// -- enum FeatureCheckStatus
+  status String @default("PENDING")
+
+  /// -- json AcceptanceCriterion[]. The oracle, as the user supplied it.
+  criteria String
+  /// -- json CriterionVerdict[]. Empty until the runs finish.
+  verdicts String @default("[]")
+  /// -- json FeatureCaseResult[]
+  cases    String @default("[]")
+
+  /// Set when the check itself broke, as distinct from a criterion failing.
+  error String?
+
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  feature     Feature     @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([featureId])
+  @@index([applicationId])
 }
 
 model Environment {
@@ -163,11 +224,22 @@ model TestSpec {
   /// service layer keeps it pointing at a real version.
   currentVersionId String?
 
+  /// The feature this spec belongs to, when it was generated against criteria.
+  /// Null for recorded, manual, and explored specs, which hang off nothing.
+  featureId String?
+  /// -- enum CasePriority. Null means NORMAL; only CRITICAL is in a smoke run.
+  priority  String?
+  /// -- json string[]. Criterion keys this case was written to settle, so a
+  /// later regression run can still say which acceptance criterion regressed.
+  criteriaKeys String?
+
   application Application   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  feature     Feature?      @relation(fields: [featureId], references: [id], onDelete: SetNull)
   versions    TestVersion[]
   executions  Execution[]
 
   @@index([applicationId])
+  @@index([featureId])
 }
 
 /// Immutable. Editing a spec or approving a heal writes a new version — that is

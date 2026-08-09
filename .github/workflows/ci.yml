@@ -1,0 +1,48 @@
+name: CI
+
+# CONTRIBUTING.md has always said CI gates every PR. Until this file existed,
+# that was a sentence rather than a fact.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    env:
+      # The API validates its environment before it boots, and the e2e suite
+      # boots it. A placeholder is enough because every test either overrides
+      # the LLM client or asserts that no model call was made — nothing here
+      # reaches Anthropic. The real-model path is `npm run smoke`, which is
+      # deliberately not wired into CI.
+      ANTHROPIC_API_KEY: sk-test-ci
+      PLAYWRIGHT_HEADLESS: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `postinstall` generates the Prisma client, which is gitignored and
+      # which nothing compiles without.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm test
+
+      # The e2e suite drives a real browser against the example app and a real
+      # SQLite file, so it needs both a browser and a migrated database.
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run db:deploy
+
+      - run: npm run test:e2e --workspace @agentx/api

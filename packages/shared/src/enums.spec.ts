@@ -31,7 +31,11 @@ describe('enum values', () => {
       recordedEventTypeSchema,
       ['NAVIGATE', 'CLICK', 'INPUT', 'SELECT', 'SCROLL', 'KEY', 'SUBMIT'],
     ],
-    ['SpecSource', specSourceSchema, ['RECORDED', 'MANUAL', 'HEALED', 'EXPLORED']],
+    [
+      'SpecSource',
+      specSourceSchema,
+      ['RECORDED', 'MANUAL', 'HEALED', 'EXPLORED', 'GENERATED'],
+    ],
     [
       'ActionType',
       actionTypeSchema,

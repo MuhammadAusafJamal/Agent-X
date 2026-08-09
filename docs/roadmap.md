@@ -11,8 +11,59 @@ Nine phases. Each ends at something demoable, so if the clock runs out mid-plan 
 | [4 — Verification](phases/phase-4-verification.md) | A run means something | A broken step reports FAIL with the evidence that proves it | **`DONE`** |
 | [5 — Agent](phases/phase-5-agent.md) | The intelligence layer | Rename a button; the agent still finds it, and remembers | **`DONE`** (E5.2 orchestrator partly — see phase file) |
 | [6 — Heal](phases/phase-6-heal.md) | Close the loop | Move a field → self-heal. Break logic → file a bug instead | **`DONE`** (verified against the live model in Phase 7) |
-| [7 — Reports](phases/phase-7-reports.md) | Ship-quality output | Deterministic reports, explorer agent, one-command demo | **`DONE`** |
+| [7 — Reports](phases/phase-7-reports.md) | Ship-quality output | Deterministic reports, explorer agent, one-command demo | **`DONE`** (explorer is API-only — see the audit below) |
 | [8 — Stretch](phases/phase-8-stretch.md) | Only if the above lands | Vision resolution, multi-browser, auth | `TODO` |
+
+## Audit — 2026-08-09
+
+A strict pass over the whole repository against the original scope, because
+`DONE` had started to mean "the code was written" rather than "a stranger can
+use it". What it found, and what was done about it.
+
+**The backend held up.** 48 routes, no stubs, no `NotImplemented`, no
+hardcoded returns. The resolver ladder, the three-state verifier, the
+deterministic-first diagnoser, the `TEST_DRIFT` gate, the confidence curve, the
+explorer's bounds, and report determinism are all genuinely built and match what
+their phase files claim.
+
+**Three claims did not hold, and are now corrected in place:**
+
+- **The explorer has no UI.** `POST /explorations` works and is tested; nothing
+  in `apps/web` calls it, so `EXPLORED` is a spec source a user cannot produce.
+  Phase 7 is `DONE` on the agent, not on the feature.
+- **Two knowledge kinds, not four.** `SELECTOR_MEMORY` and `FLOW` are written.
+  `ELEMENT_ALIAS` and `DOMAIN_FACT` exist in the enum and nothing writes them.
+  E5.4 claimed all four.
+- **CI was a sentence.** `CONTRIBUTING.md` said CI gated every PR; `.github/`
+  did not exist. It does now.
+
+**Five defects that would have shown up in a demo, now fixed:**
+
+1. Evidence was written **two directories above the repository**.
+   `EVIDENCE_DIR` defaulted to `../../data/evidence` while `EvidenceService`
+   resolved it from the repo root, so screenshots, traces, and video landed
+   outside the checkout and outside `.gitignore`.
+2. A run could **strand in `RUNNING` forever**. `chromium.launch` sat outside
+   the runner's `try`, after the status had already been set, so a missing
+   Playwright browser skipped `finish()` entirely and leaked the browser.
+3. **A fresh clone could not build.** The Prisma client is gitignored,
+   `@prisma/client` has no `postinstall`, and `db:generate` was documented only
+   as something to run after a schema change. `npm run demo` died at `db:seed`.
+4. **Errored runs never closed their stream.** The dashboard's terminal-event
+   check named `execution.finished` and missed `execution.error`, so a failed
+   run sat on an empty timeline indefinitely.
+5. **The explorer's prompts were not redacted.** Its redactor was built from an
+   empty credential set, which makes `redact()` a silent no-op — so every page
+   it read reached the model verbatim.
+
+**The dashboard was measured, not guessed.** Empty database to first passing
+run was 7 screens, 5 dialogs, 12 fields, **15 clicks**, plus one step with no UI
+at all. It is now 4 screens, 1 dialog, 3 fields, **5 clicks** — and one click on
+a seeded database, which is the number a demo actually runs on.
+
+What remains deliberately unbuilt is listed under **Not built** in each phase
+file. The rule going forward: a `DONE` means a stranger can clone the repository
+and use the thing, not that the code exists.
 
 ## Sequencing rationale
 

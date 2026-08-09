@@ -73,6 +73,14 @@ export type ExploreStopReason = z.infer<typeof exploreStopReasonSchema>;
 export const explorationResultSchema = z.object({
   goal: z.string(),
   stoppedBecause: exploreStopReasonSchema,
+  /**
+   * What actually went wrong, when the reason alone does not say.
+   *
+   * `ERROR` without this is indistinguishable from an exploration that simply
+   * ended: the model call failed, the reason was swallowed, and the caller was
+   * left with a one-word verdict and nothing to act on.
+   */
+  stoppedDetail: z.string().nullable(),
   stepsTaken: z.number().int().min(0),
   /** URLs visited, in order, deduplicated. */
   visited: z.array(z.string()),

@@ -1,12 +1,12 @@
 {
   "extends": "./tsconfig.json",
-  "comment": "prisma.config.ts and prisma/seed.ts are CLI-only. Compiling either would drag tsc's inferred rootDir up to the workspace root, moving the entrypoint from dist/main.js to dist/src/main.js and breaking start:prod. They are still typechecked by tsconfig.json.",
+  "comment": "prisma.config.ts and everything under prisma/ is CLI-only. Compiling any of it drags tsc's inferred rootDir up to the workspace root, moving the entrypoint from dist/main.js to dist/src/main.js — and because nest start still launches dist/main, the API silently keeps running the last build from before the move. The whole directory is excluded rather than each file, so adding a script there cannot reintroduce that. All of it is still typechecked by tsconfig.json.",
   "exclude": [
     "node_modules",
     "test",
     "dist",
     "prisma.config.ts",
-    "prisma/seed.ts",
+    "prisma",
     "**/*spec.ts"
   ]
 }

@@ -9,11 +9,12 @@ import {
   type HealingRecordWithContext,
   type TargetHints,
 } from "@agentx/shared";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Term } from "@/components/vocab-badge";
 import { EmptyState, ErrorBanner, Loading } from "@/components/ui-bits";
 import { apiFetch, evidenceUrl } from "@/lib/api";
 import { describe, useResource } from "@/lib/use-api";
+import { toast } from "@/lib/use-toast";
 
 const reviewResultSchema = z.object({
   appliedToVersionId: z.string().nullable(),
@@ -50,7 +51,19 @@ export function HealingQueue() {
       method: "POST",
       body: { healingIds, decision },
     })
-      .then(healings.reload)
+      .then((result) => {
+        // The API returns the version the approval wrote; saying which one
+        // turns "something happened" into a fact you can go and check.
+        toast.success(
+          decision === "APPROVE"
+            ? `Approved ${healingIds.length} repair${healingIds.length === 1 ? "" : "s"}`
+            : `Rejected ${healingIds.length} repair${healingIds.length === 1 ? "" : "s"}`,
+          decision === "APPROVE" && result.appliedToVersionId !== null
+            ? "Written into a new version of the specification."
+            : "The specification is untouched, so the next run fails the same way.",
+        );
+        healings.reload();
+      })
       .catch((error: unknown) => setFailure(describe(error)))
       .finally(() => setPending(null));
   }
@@ -156,20 +169,13 @@ function HealingCard({
         <span className="text-muted-foreground font-mono text-xs">
           step {healing.stepIndex + 1}
         </span>
-        <Badge variant="outline" className="text-xs">
-          {healing.diagnosis}
-        </Badge>
-        <Badge
+        <Term kind="diagnosis" value={healing.diagnosis} className="text-xs" />
+        <Term
+          kind="healingStatus"
+          value={healing.status}
           variant={healing.status === "APPLIED" ? "secondary" : "outline"}
           className="text-xs"
-          title={
-            healing.status === "APPLIED"
-              ? "The repair was applied during the run and the step then passed"
-              : "Proposed, but not proven during the run"
-          }
-        >
-          {healing.status === "APPLIED" ? "proven in the run" : "proposed"}
-        </Badge>
+        />
       </div>
 
       <p className="text-sm font-medium">{healing.stepIntent}</p>

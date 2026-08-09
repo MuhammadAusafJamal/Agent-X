@@ -89,6 +89,24 @@ export class CredentialsService {
     };
   }
 
+  /**
+   * A redactor over whatever this environment's references currently resolve
+   * to, without demanding that all of them do.
+   *
+   * `resolve` is the right call when a run is about to *use* the credentials —
+   * it should fail loudly and early on a missing one. This is for the callers
+   * that only need to scrub: they have no business failing because a variable
+   * they were never going to type is unset, but they still must not leak the
+   * ones that are. Building `new Redactor([])` instead is the trap — it has no
+   * secrets to match, so `redact` returns its input unchanged and every writer
+   * downstream looks like it is redacting when it is not.
+   */
+  redactorFor(refs: CredentialRefs): Redactor {
+    return new Redactor(
+      this.entries(refs).map(({ envVar }) => process.env[envVar]),
+    );
+  }
+
   private entries(refs: CredentialRefs): { key: string; envVar: string }[] {
     const entries: { key: string; envVar: string }[] = [];
 

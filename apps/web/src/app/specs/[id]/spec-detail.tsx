@@ -17,9 +17,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { RunSpecDialog } from "@/components/executions/run-spec-dialog";
 import { ExpectationEditor } from "@/components/specs/expectation-editor";
-import { EmptyState, ErrorBanner, Loading } from "@/components/ui-bits";
+import { Term } from "@/components/vocab-badge";
+import { Async } from "@/components/async";
+import {
+  EmptyState,
+  ErrorBanner,
+  Loading,
+  TableSkeleton,
+} from "@/components/ui-bits";
 import { apiFetch } from "@/lib/api";
 import { describe, useResource } from "@/lib/use-api";
+import { toast } from "@/lib/use-toast";
 
 /**
  * The compiled specification, and its editor.
@@ -76,6 +84,25 @@ export function SpecDetail({ specId }: { specId: string }) {
     setDraft(next);
   }
 
+  function addStep() {
+    setDraft([...steps, blankStep()]);
+  }
+
+  function deleteStep(index: number) {
+    // `saveVersionSchema` requires at least one step, so deleting the last one
+    // left the editor in a state that could not be saved and could not be
+    // recovered from except by discarding everything.
+    if (steps.length === 1) {
+      setFailure(
+        "A specification needs at least one step. Edit this one rather than deleting it, or discard your changes.",
+      );
+      return;
+    }
+
+    setFailure(null);
+    setDraft(steps.filter((_, i) => i !== index));
+  }
+
   async function save() {
     setFailure(null);
 
@@ -98,6 +125,10 @@ export function SpecDetail({ specId }: { specId: string }) {
       });
       setDraft(null);
       setNote("");
+      toast.success(
+        `Saved as version ${(version?.version ?? 0) + 1}`,
+        "The previous version is untouched.",
+      );
       resource.reload();
       versions.reload();
     } catch (error) {
@@ -125,7 +156,7 @@ export function SpecDetail({ specId }: { specId: string }) {
             </p>
           ) : null}
           <div className="mt-2 flex items-center gap-2">
-            <Badge variant="outline">{spec.source}</Badge>
+            <Term kind="specSource" value={spec.source} />
             {version !== null ? (
               <Badge variant="secondary">version {version.version}</Badge>
             ) : null}
@@ -200,39 +231,59 @@ export function SpecDetail({ specId }: { specId: string }) {
               editing={editing}
               onChange={(patch) => update(index, patch)}
               onMove={(by) => move(index, by)}
-              onDelete={() => setDraft(steps.filter((_, i) => i !== index))}
+              onDelete={() => deleteStep(index)}
             />
           ))}
         </ol>
       )}
 
+      {editing ? (
+        <Button variant="outline" size="sm" onClick={addStep}>
+          Add a step
+        </Button>
+      ) : null}
+
       <section className="space-y-2">
         <h2 className="font-heading text-sm font-semibold">Version history</h2>
-        {versions.status === "ok" ? (
-          <ul className="border-border divide-border divide-y rounded-lg border text-sm">
-            {versions.data.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex items-center justify-between px-4 py-2"
-              >
-                <span className="flex items-center gap-2">
-                  <span className="font-medium">v{entry.version}</span>
-                  <Badge variant="outline" className="text-xs">
-                    {entry.source}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {entry.note ?? "—"}
+
+        {/* Through `Async` rather than a status check: written as
+            `status === "ok" ? … : <Loading/>`, a failed request rendered
+            "Loading versions…" for as long as the page stayed open. */}
+        <Async
+          resource={versions}
+          skeleton={<TableSkeleton rows={2} />}
+          isEmpty={(entries) => entries.length === 0}
+          empty={{
+            title: "No versions yet",
+            hint: "Compile a recording to produce the first one.",
+          }}
+        >
+          {(entries) => (
+            <ul className="border-border divide-border divide-y rounded-lg border text-sm">
+              {entries.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="flex items-center justify-between px-4 py-2"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium">v{entry.version}</span>
+                    <Term
+                      kind="specSource"
+                      value={entry.source}
+                      className="text-xs"
+                    />
+                    <span className="text-muted-foreground">
+                      {entry.note ?? "—"}
+                    </span>
                   </span>
-                </span>
-                <span className="text-muted-foreground text-xs">
-                  {new Date(entry.createdAt).toLocaleString()}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <Loading what="versions" />
-        )}
+                  <span className="text-muted-foreground text-xs">
+                    {new Date(entry.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Async>
       </section>
     </div>
   );
@@ -363,6 +414,26 @@ function StepCard({
   );
 }
 
+/**
+ * A new step, described but not targeted.
+ *
+ * Deliberately carries no `targetHints`: a hand-written step has no recording
+ * behind it, so there is nothing honest to put there. The resolver falls
+ * through to the model, which is exactly the path a description-only target is
+ * meant to take.
+ */
+function blankStep(): DraftTestStep {
+  return {
+    intent: "",
+    action: "CLICK",
+    targetDescription: "",
+    targetHints: { selectorCandidates: [] },
+    data: null,
+    expectation: { kind: "NO_CONSOLE_ERRORS", allowlist: [] },
+    optional: false,
+  };
+}
+
 function toDraft(step: TestStep): DraftTestStep {
   return {
     intent: step.intent,
@@ -389,6 +460,10 @@ function summarize(step: DraftTestStep): string {
       return `“${expectation.value}” appears`;
     case "NETWORK_OK":
       return `no request fails (above ${expectation.maxStatus})`;
+    case "API_RESPONSE":
+      return expectation.match === "exists"
+        ? `“${expectation.jsonPath}” is present in the response from “${expectation.urlPattern}”`
+        : `“${expectation.jsonPath}” ${expectation.match} “${expectation.value ?? ""}”`;
     case "NO_CONSOLE_ERRORS":
       return "no console errors";
     case "SEMANTIC":

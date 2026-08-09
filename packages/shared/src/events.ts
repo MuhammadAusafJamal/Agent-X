@@ -4,6 +4,11 @@ import { executionStatusSchema, observationKindSchema } from './enums';
 import { recordedEventSchema } from './domain/recording';
 import { executionStepSchema } from './domain/execution';
 import { healingRecordSchema } from './domain/intelligence';
+import {
+  criterionVerdictSchema,
+  featureCaseResultSchema,
+  featureCheckStatusSchema,
+} from './feature-check';
 
 /**
  * The SSE payloads.
@@ -73,6 +78,39 @@ export const executionErrorEventSchema = z.object({
   message: z.string(),
 });
 
+/**
+ * Feature-check progress.
+ *
+ * A check plans, then walks the application once per case, then starts a run per
+ * case — minutes of work with nothing to show unless it says so as it goes. The
+ * phase is carried explicitly rather than inferred from which event arrived, so
+ * a client that connects late still knows where it is.
+ */
+export const featureCheckProgressEventSchema = z.object({
+  type: z.literal('featureCheck.progress'),
+  featureCheckId: idSchema,
+  status: featureCheckStatusSchema,
+  message: z.string(),
+});
+
+export const featureCheckCaseEventSchema = z.object({
+  type: z.literal('featureCheck.case'),
+  featureCheckId: idSchema,
+  case: featureCaseResultSchema,
+});
+
+export const featureCheckFinishedEventSchema = z.object({
+  type: z.literal('featureCheck.finished'),
+  featureCheckId: idSchema,
+  verdicts: z.array(criterionVerdictSchema),
+});
+
+export const featureCheckErrorEventSchema = z.object({
+  type: z.literal('featureCheck.error'),
+  featureCheckId: idSchema.nullable(),
+  message: z.string(),
+});
+
 export const recordingSseEventSchema = z.discriminatedUnion('type', [
   recordingStartedEventSchema,
   recordingEventEventSchema,
@@ -91,6 +129,14 @@ export const executionSseEventSchema = z.discriminatedUnion('type', [
 ]);
 export type ExecutionSseEvent = z.infer<typeof executionSseEventSchema>;
 
+export const featureCheckSseEventSchema = z.discriminatedUnion('type', [
+  featureCheckProgressEventSchema,
+  featureCheckCaseEventSchema,
+  featureCheckFinishedEventSchema,
+  featureCheckErrorEventSchema,
+]);
+export type FeatureCheckSseEvent = z.infer<typeof featureCheckSseEventSchema>;
+
 export const agentXEventSchema = z.discriminatedUnion('type', [
   recordingStartedEventSchema,
   recordingEventEventSchema,
@@ -102,6 +148,10 @@ export const agentXEventSchema = z.discriminatedUnion('type', [
   executionHealingEventSchema,
   executionFinishedEventSchema,
   executionErrorEventSchema,
+  featureCheckProgressEventSchema,
+  featureCheckCaseEventSchema,
+  featureCheckFinishedEventSchema,
+  featureCheckErrorEventSchema,
 ]);
 export type AgentXEvent = z.infer<typeof agentXEventSchema>;
 export type AgentXEventType = AgentXEvent['type'];
@@ -112,4 +162,6 @@ export const TERMINAL_EVENT_TYPES: readonly AgentXEventType[] = [
   'recording.error',
   'execution.finished',
   'execution.error',
+  'featureCheck.finished',
+  'featureCheck.error',
 ] as const;

@@ -8,6 +8,7 @@
     "apps/*"
   ],
   "scripts": {
+    "postinstall": "npm run db:generate",
     "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "npm run dev --workspace @agentx/web",
     "dev:api": "npm run start:dev --workspace @agentx/api",
@@ -24,8 +25,10 @@
     "playwright:install": "playwright install chromium",
     "db:seed": "npm run db:seed --workspace @agentx/api",
     "db:deploy": "npm run db:deploy --workspace @agentx/api",
-    "demo:setup": "npm run db:deploy && npm run db:seed",
-    "demo": "npm run demo:setup && cross-env DEMO_APP_USER=demo@example.com DEMO_APP_PASSWORD=hunter2 concurrently -n demo,api,web -c yellow,cyan,magenta \"npm:demo:app\" \"npm:dev:api\" \"npm:dev:web\""
+    "demo:setup": "npm run db:generate && npm run db:deploy && npm run db:seed",
+    "demo": "npm run demo:setup && cross-env DEMO_APP_USER=demo@example.com DEMO_APP_PASSWORD=hunter2 concurrently --kill-others-on-fail -n demo,api,web -c yellow,cyan,magenta \"npm:demo:app\" \"npm:dev:api\" \"npm:dev:web\"",
+    "smoke": "node scripts/smoke.mjs",
+    "probe": "node scripts/probe-target.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

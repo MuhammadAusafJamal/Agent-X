@@ -115,7 +115,7 @@ It is also gated behind an explicit `llm` option. The verifier resolves elements
 
 **Deliverables**
 
-- Read/write over `KnowledgeItem` for all four kinds: `ELEMENT_ALIAS`, `SELECTOR_MEMORY`, `FLOW`, `DOMAIN_FACT`.
+- Read/write over `KnowledgeItem` for all four kinds: `ELEMENT_ALIAS`, `SELECTOR_MEMORY`, `FLOW`, `DOMAIN_FACT`. **Two of the four were built.** `SELECTOR_MEMORY` is written by the post-run consolidation pass and `FLOW` by the explorer; `ELEMENT_ALIAS` and `DOMAIN_FACT` exist in the enum and nothing writes them. The confidence model, the scoping, and the read path are kind-agnostic, so adding either is a writer rather than a mechanism — but until one exists, this deliverable overstated what shipped.
 - Confidence model: rises on hit, decays on miss and with age. Entries below a floor stop being injected into prompts and stop being trusted at rung 1 — **stale knowledge is worse than none**, because it sends the resolver confidently at the wrong element.
 - Scoped strictly per `Application`; no cross-application bleed.
 - Relevance selection for the context builder, so prompts carry the handful of entries that matter.
