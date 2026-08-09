@@ -1,15 +1,13 @@
 import {
   bugStatusSchema,
+  evidenceRefsSchema,
   parseJson,
   reproStepsSchema,
   severitySchema,
   type BugReport,
 } from '@agentx/shared';
-import { z } from 'zod';
 import type { BugReport as BugReportRow } from '../generated/prisma/client';
 import { toIso } from '../common/mappers';
-
-const evidenceRefsSchema = z.array(z.string().min(1));
 
 export function toBugReport(row: BugReportRow): BugReport {
   return {

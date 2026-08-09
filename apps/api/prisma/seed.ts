@@ -34,6 +34,24 @@ dotenv.config({ path: path.resolve(__dirname, '..', '..', '..', '.env') });
 
 const DEMO_URL = process.env['DEMO_APP_URL'] ?? 'http://localhost:4321';
 
+/**
+ * The demo application's own hard-coded account, mirrored from
+ * `examples/demo-app/server.js`.
+ *
+ * Seeded as literals rather than as `ENV_REF`s so a clean clone reaches a
+ * passing run with nothing exported: `npm run dev` is enough, and
+ * `MissingCredentialError` cannot fire on a credential that was never a
+ * reference. The env vars still win when they are set, so `npm run demo` and
+ * `npm run smoke` behave exactly as before.
+ *
+ * This is safe *only* because the demo app's account is public and local. A
+ * real application's credentials belong in `credentialRefs` and `ENV_REF`,
+ * which is the path everything else in the codebase is built around — literals
+ * are written to SQLite, and from there they can reach evidence and reports.
+ */
+const DEMO_USER = process.env['DEMO_APP_USER'] ?? 'demo@example.com';
+const DEMO_PASSWORD = process.env['DEMO_APP_PASSWORD'] ?? 'hunter2';
+
 // Prisma 7 reaches SQLite through a driver adapter, the same way the app does.
 fs.mkdirSync(path.dirname(resolveDatabasePath()), { recursive: true });
 
@@ -69,9 +87,7 @@ const SIGN_IN_STEPS: DraftTestStep[] = [
       landmark: 'form "Sign in"',
       selectorCandidates: [{ strategy: 'CSS', value: '#email', score: 0.8 }],
     },
-    // A reference, never a value — the runner reads it from the process
-    // environment at the moment it is typed.
-    data: { kind: 'ENV_REF', envVar: 'DEMO_APP_USER' },
+    data: { kind: 'LITERAL', value: DEMO_USER },
     expectation: { kind: 'TEXT', value: 'Password' },
     optional: false,
   },
@@ -83,7 +99,7 @@ const SIGN_IN_STEPS: DraftTestStep[] = [
       landmark: 'form "Sign in"',
       selectorCandidates: [{ strategy: 'CSS', value: '#password', score: 0.9 }],
     },
-    data: { kind: 'ENV_REF', envVar: 'DEMO_APP_PASSWORD' },
+    data: { kind: 'LITERAL', value: DEMO_PASSWORD },
     expectation: { kind: 'TEXT', value: 'Password' },
     optional: false,
   },
@@ -147,7 +163,8 @@ async function main(): Promise<void> {
         versions === 0 ? '' : ', existing version kept'
       })`,
       '',
-      'Credentials are read from DEMO_APP_USER and DEMO_APP_PASSWORD at run time.',
+      `Signs in as ${DEMO_USER}. Set DEMO_APP_USER and DEMO_APP_PASSWORD before`,
+      'seeding to use a different account.',
       '',
     ].join('\n'),
   );
@@ -194,11 +211,10 @@ async function upsertApplication(projectId: string) {
 }
 
 async function upsertEnvironment(applicationId: string) {
-  const credentialRefs = JSON.stringify({
-    usernameEnv: 'DEMO_APP_USER',
-    passwordEnv: 'DEMO_APP_PASSWORD',
-    extra: {},
-  });
+  // Empty on purpose: the seeded spec carries its credentials as literals, so
+  // there is nothing to resolve and nothing to fail on. Point this at real
+  // variable names the moment a spec here needs a real secret.
+  const credentialRefs = JSON.stringify({ extra: {} });
 
   const existing = await prisma.environment.findFirst({
     where: { applicationId, name: 'local' },

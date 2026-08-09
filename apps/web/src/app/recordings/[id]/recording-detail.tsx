@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { z } from "zod";
 import {
+  TERMINAL_EVENT_TYPES,
   recordingSchema,
   recordingSseEventSchema,
   recordingWithEventsSchema,
@@ -41,7 +42,13 @@ export function RecordingDetail({ recordingId }: { recordingId: string }) {
   const stream = useEventStream(
     isRecording ? `/recordings/${recordingId}/events` : null,
     recordingSseEventSchema,
-    { isTerminal: (event) => event.type === "recording.stopped" },
+    {
+      // Shared with the API rather than hand-written. Spelled out as
+      // `recording.stopped` alone, this missed `recording.error`, so a
+      // recorder that crashed left the stream open on a page that never
+      // stopped saying it was live.
+      isTerminal: (event) => TERMINAL_EVENT_TYPES.includes(event.type),
+    },
   );
 
   if (resource.status === "loading") return <Loading what="recording" />;

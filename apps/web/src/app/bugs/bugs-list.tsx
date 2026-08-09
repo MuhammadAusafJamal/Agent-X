@@ -8,11 +8,12 @@ import {
   type BugReportWithContext,
   type Severity,
 } from "@agentx/shared";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Term } from "@/components/vocab-badge";
 import { EmptyState, ErrorBanner, Loading } from "@/components/ui-bits";
 import { apiFetch, evidenceUrl } from "@/lib/api";
 import { describe, useResource } from "@/lib/use-api";
+import { toast } from "@/lib/use-toast";
 
 const SEVERITY_STYLE: Record<Severity, string> = {
   CRITICAL: "bg-destructive/15 text-destructive border-destructive/40",
@@ -96,24 +97,27 @@ function BugCard({
   busy: boolean;
   onStatus: (status: "ACKNOWLEDGED" | "DISMISSED") => void;
 }) {
-  const [copied, setCopied] = useState(false);
-
   function copy() {
-    void navigator.clipboard.writeText(asMarkdown(bug)).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    void navigator.clipboard
+      .writeText(asMarkdown(bug))
+      .then(() => toast.success("Copied as Markdown"))
+      .catch(() => toast.error("Could not copy to the clipboard"));
   }
 
   return (
     <li className="border-border bg-card space-y-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className={`text-xs ${SEVERITY_STYLE[bug.severity]}`}>
-          {bug.severity}
-        </Badge>
-        <Badge variant={bug.status === "OPEN" ? "secondary" : "outline"} className="text-xs">
-          {bug.status}
-        </Badge>
+        <Term
+          kind="severity"
+          value={bug.severity}
+          className={`text-xs ${SEVERITY_STYLE[bug.severity]}`}
+        />
+        <Term
+          kind="bugStatus"
+          value={bug.status}
+          variant={bug.status === "OPEN" ? "secondary" : "outline"}
+          className="text-xs"
+        />
         {bug.occurrences > 1 ? (
           <span
             className="text-muted-foreground text-xs"
@@ -177,7 +181,7 @@ function BugCard({
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={copy}>
-          {copied ? "Copied" : "Copy as Markdown"}
+          Copy as Markdown
         </Button>
         <Button size="sm" variant="outline" asChild>
           <Link href={`/executions/${bug.executionId}`}>The run</Link>

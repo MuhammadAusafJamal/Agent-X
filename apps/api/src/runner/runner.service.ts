@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
   chromium,
+  type Browser,
   type BrowserContext,
   type Locator,
   type Page,
@@ -38,6 +39,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { ConsolidationService } from '../knowledge/consolidation.service';
 import { ReportsService } from '../reports/reports.service';
 import { stepKey } from '../resolver/step-key';
+import { describeSetupFailure } from './launch-failure';
 import {
   CredentialsService,
   type ResolvedCredentials,
@@ -56,9 +58,6 @@ import {
   UnresolvedDataError,
 } from './actions';
 
-const STEP_TIMEOUT_MS = 15_000;
-const RUN_TIMEOUT_MS = 5 * 60_000;
-
 /**
  * How long to let the page settle before reverifying a step that failed its
  * expectation.
@@ -69,15 +68,6 @@ const RUN_TIMEOUT_MS = 5 * 60_000;
  * is worth that.
  */
 const SETTLE_BEFORE_REVERIFY_MS = 1200;
-
-/**
- * Ceiling on model calls for one run, shared by the resolver and the verifier.
- *
- * A guard against a pathological spec quietly costing a fortune — a run that
- * needs more than this is telling you its hints have rotted, not that it needs
- * a bigger allowance.
- */
-const MAX_LLM_CALLS_PER_RUN = 20;
 
 export interface RunHooks {
   emit: (event: ExecutionSseEvent) => void;
@@ -116,6 +106,16 @@ interface StepRunContext {
 export class RunnerService {
   private readonly logger = new Logger(RunnerService.name);
 
+  /**
+   * When this service last touched a site under test.
+   *
+   * Service-wide rather than per-run, and deliberately: a rate limit is a
+   * property of the site, not of the run that happens to be hitting it. Once
+   * runs can overlap, two of them pacing themselves independently is two of them
+   * arriving twice as fast.
+   */
+  private lastActionAt: number | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: TypedConfigService,
@@ -141,7 +141,8 @@ export class RunnerService {
     });
 
     const steps = execution.version.steps;
-    const deadline = Date.now() + RUN_TIMEOUT_MS;
+    const maxLlmCalls = this.config.get('AGENTX_MAX_LLM_CALLS_PER_RUN');
+    const deadline = Date.now() + this.config.get('AGENTX_RUN_TIMEOUT_MS');
 
     // Credentials are resolved before the browser opens: a run that gets as far
     // as a login form and then types `undefined` wastes a browser session and
@@ -176,21 +177,34 @@ export class RunnerService {
 
     const dir = executionId;
     const absoluteDir = this.evidence.resolve(dir);
-    await fs.mkdir(absoluteDir, { recursive: true });
 
-    const browser = await chromium.launch({
-      headless: this.config.get('PLAYWRIGHT_HEADLESS'),
+    // Opening a browser is the other thing that can fail before a single step
+    // runs, and it fails for mundane reasons: a Playwright browser that was
+    // never installed, a machine with no display, an evidence directory that
+    // cannot be written. It gets the same treatment as credentials above —
+    // whatever happens, the execution row leaves RUNNING and anything already
+    // opened is closed. Left inline, a throw here escaped `run()` entirely:
+    // `finish()` never ran, the row stayed RUNNING forever, and the dashboard
+    // polled a run that could never terminate.
+    let browser: Browser;
+    let context: BrowserContext;
+
+    try {
+      await fs.mkdir(absoluteDir, { recursive: true });
+      ({ browser, context } = await this.openBrowser(absoluteDir));
+    } catch (error) {
+      await this.finish(executionId, 'ERROR', hooks, {
+        error: describeSetupFailure(error),
+      });
+      return;
+    }
+
+    const collector = new ObservationCollector(credentials.redactor, {
+      maxPerStep: this.config.get('AGENTX_MAX_STEP_NETWORK'),
+      maxPerRun: this.config.get('AGENTX_MAX_RUN_NETWORK'),
     });
 
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      recordVideo: { dir: absoluteDir },
-    });
-
-    const collector = new ObservationCollector(credentials.redactor);
     collector.attach(context);
-
-    await context.tracing.start({ screenshots: true, snapshots: true });
 
     let page: Page | null = null;
     // Null means "let the roll-up decide"; only cancellation and hard errors
@@ -226,10 +240,10 @@ export class RunnerService {
           where: { executionId: execution.id },
         });
 
-        if (spent >= MAX_LLM_CALLS_PER_RUN && !budgetWarned) {
+        if (spent >= maxLlmCalls && !budgetWarned) {
           budgetWarned = true;
           this.logger.warn(
-            `Execution ${executionId} hit its budget of ${MAX_LLM_CALLS_PER_RUN} model calls; remaining steps are deterministic only.`,
+            `Execution ${executionId} hit its budget of ${maxLlmCalls} model calls; remaining steps are deterministic only.`,
           );
         }
 
@@ -243,7 +257,7 @@ export class RunnerService {
           credentials,
           collector,
           hooks,
-          withinBudget: spent < MAX_LLM_CALLS_PER_RUN,
+          withinBudget: spent < maxLlmCalls,
           priorIntents,
         });
 
@@ -272,13 +286,64 @@ export class RunnerService {
     });
   }
 
+  /**
+   * Opens the browser and the recording context as one unit.
+   *
+   * The two are separate Playwright calls but a single outcome: a context that
+   * failed to open leaves a browser process with nobody left to close it, so
+   * the failure path closes it here rather than relying on a `finally` the
+   * caller never reaches.
+   */
+  private async openBrowser(
+    absoluteDir: string,
+  ): Promise<{ browser: Browser; context: BrowserContext }> {
+    const browser = await chromium.launch({
+      headless: this.config.get('PLAYWRIGHT_HEADLESS'),
+    });
+
+    try {
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        recordVideo: { dir: absoluteDir },
+      });
+
+      await context.tracing.start({ screenshots: true, snapshots: true });
+
+      return { browser, context };
+    } catch (error) {
+      await browser.close().catch(() => undefined);
+      throw error;
+    }
+  }
+
   /** One step: resolve, act, observe, verify — and, when it fails, react. */
+  /** Waits out `AGENTX_MIN_ACTION_INTERVAL_MS`, then marks now. No-op at zero. */
+  private async pace(): Promise<void> {
+    const interval = this.config.get('AGENTX_MIN_ACTION_INTERVAL_MS');
+
+    if (interval <= 0) return;
+
+    if (this.lastActionAt !== null) {
+      const wait = this.lastActionAt + interval - Date.now();
+
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+
+    this.lastActionAt = Date.now();
+  }
+
   private async runStep(
     page: Page,
     step: TestStepRow,
     run: StepRunContext,
   ): Promise<StepStatus> {
     const { executionId, applicationId, credentials, collector, hooks } = run;
+
+    // Paced before anything is read or clicked. A replay against a site you do
+    // not own should not arrive at a rate no human could produce — being rate
+    // limited presents as every rung of the resolver failing at once, which is
+    // the hardest failure there is to read back out of evidence.
+    await this.pace();
 
     const hints = parseJson(
       targetHintsSchema,
@@ -337,7 +402,7 @@ export class RunnerService {
         );
 
         const resolution = await this.resolver.resolve(page, hints, {
-          timeoutMs: STEP_TIMEOUT_MS / 2,
+          timeoutMs: this.config.get('AGENTX_STEP_TIMEOUT_MS') / 2,
           knownSelector: remembered?.selector ?? null,
           // Rung 6 costs money, so it is offered only while the run is within
           // its budget.
@@ -347,6 +412,7 @@ export class RunnerService {
                 targetDescription: step.targetDescription ?? step.intent,
                 executionId,
                 redactor: credentials.redactor,
+                maxSnapshotChars: this.config.get('AGENTX_MAX_SNAPSHOT_CHARS'),
               }
             : undefined,
         });
@@ -373,7 +439,10 @@ export class RunnerService {
         action,
         locator,
         resolveData(data, credentials),
-        { timeoutMs: STEP_TIMEOUT_MS, fallbackUrl: run.environmentBaseUrl },
+        {
+          timeoutMs: this.config.get('AGENTX_STEP_TIMEOUT_MS'),
+          fallbackUrl: run.environmentBaseUrl,
+        },
       );
     } catch (caught) {
       status = 'FAIL';
@@ -387,7 +456,7 @@ export class RunnerService {
 
     // Drained before verification, because the verifier judges on what the
     // browser reported during *this* step.
-    const observed = collector.drain();
+    const observed = await collector.drain();
 
     const expectation = parseJson(
       expectationSchema,
@@ -518,6 +587,7 @@ export class RunnerService {
       intent: input.intent,
       hints: input.hints,
       network: input.observed.network,
+      runNetwork: input.run.collector.runNetwork(),
       console: input.observed.console,
       redactor: input.run.credentials.redactor,
       executionId: input.run.executionId,
@@ -566,7 +636,7 @@ export class RunnerService {
     // from, and nothing is re-run to obtain it.
     if (!input.unresolvedTarget && input.error === null) {
       await page.waitForTimeout(SETTLE_BEFORE_REVERIFY_MS);
-      this.absorb(observed, run.collector.drain());
+      this.absorb(observed, await run.collector.drain());
 
       const second = await this.verify(page, {
         expectation: input.expectation,
@@ -713,7 +783,10 @@ export class RunnerService {
         action,
         proposal.locator,
         resolveData(input.data, run.credentials),
-        { timeoutMs: STEP_TIMEOUT_MS, fallbackUrl: run.environmentBaseUrl },
+        {
+          timeoutMs: this.config.get('AGENTX_STEP_TIMEOUT_MS'),
+          fallbackUrl: run.environmentBaseUrl,
+        },
       );
     } catch (caught) {
       applyError = run.credentials.redactor.redact(
@@ -721,7 +794,7 @@ export class RunnerService {
       );
     }
 
-    this.absorb(observed, run.collector.drain());
+    this.absorb(observed, await run.collector.drain());
 
     const reverified =
       applyError !== null

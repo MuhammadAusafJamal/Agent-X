@@ -58,6 +58,93 @@ export function isDestructive(name: string | null | undefined): boolean {
 }
 
 /**
+ * Controls that do something to the world outside the browser.
+ *
+ * `DESTRUCTIVE` is about damage to the application under test. This is about
+ * *reach*: a newsletter signup, a contact form, an enquiry, a booking. Nothing
+ * here breaks the site, and on your own staging environment none of it matters
+ * much — a stray subscription is a row you can delete.
+ *
+ * It matters on a site you do not own. An exploration that fills an email field
+ * and clicks "Subscribe" has put a real address into a real mailing list, and no
+ * amount of tidying afterwards unsends the confirmation. There is no way to try
+ * that and find out, which is why it is refused rather than attempted.
+ *
+ * Kept apart from `DESTRUCTIVE` so the two reasons stay distinguishable in the
+ * refusal trail a report renders: "would have damaged something" and "would have
+ * contacted somebody" are different things for a person to read.
+ */
+const SIDE_EFFECTING = new RegExp(
+  [
+    'subscribe',
+    'sign ?up',
+    'register',
+    'submit',
+    '\\bsend\\b',
+    'book(ing)?\\b',
+    'reserve',
+    '\\bbuy\\b',
+    'checkout',
+    'add to (cart|basket|bag)',
+    '\\bpay\\b',
+    'donate',
+    'contact',
+    'enquir',
+    'inquir',
+    '\\bapply\\b',
+    'request',
+    'newsletter',
+    'download',
+    'get in touch',
+    'join',
+  ].join('|'),
+  'i',
+);
+
+export function isSideEffecting(name: string | null | undefined): boolean {
+  if (name === null || name === undefined) return false;
+  return SIDE_EFFECTING.test(name);
+}
+
+/**
+ * Whether activating this control would submit a form somewhere.
+ *
+ * A name-based rule catches the honest cases; this catches the ones named
+ * "Continue" or "→". The DOM facts are read by the caller — a pure predicate
+ * cannot query a page — and handed over here so the rule itself stays testable
+ * without a browser.
+ *
+ * A same-origin `GET` form is exempt: that is a search box, and searching is
+ * reading. Everything else is treated as a submission, including a form with no
+ * `action` at all, because a JavaScript handler is the most common way a real
+ * site posts a newsletter signup and it leaves no attribute behind.
+ */
+export function isFormSubmit(form: {
+  inForm: boolean;
+  method: string | null;
+  action: string | null;
+  currentUrl: string;
+}): boolean {
+  if (!form.inForm) return false;
+
+  const method = (form.method ?? 'get').toLowerCase();
+
+  if (method !== 'get') return true;
+
+  // A GET form that posts elsewhere is still somebody else's endpoint.
+  if (form.action === null || form.action === '') return false;
+
+  try {
+    return (
+      new URL(form.action, form.currentUrl).origin !==
+      new URL(form.currentUrl).origin
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Same-origin only.
  *
  * Scoped to the origin rather than to a path prefix: a login redirect to `/auth`
@@ -87,6 +174,15 @@ export interface Budget {
   maxSteps: number;
   maxLlmCalls: number;
   maxDurationMs: number;
+  /**
+   * Shortest gap between two actions against the site.
+   *
+   * Zero on a local application, where politeness is not a concept. Set on a
+   * site you do not own: an agent that clicks as fast as the page will answer is
+   * indistinguishable from something worth blocking, and being blocked is the
+   * one failure this tool cannot diagnose its way out of.
+   */
+  minActionIntervalMs?: number;
 }
 
 export type BudgetBreach = 'STEP_BUDGET' | 'TIME_BUDGET' | 'MODEL_BUDGET';
@@ -101,6 +197,7 @@ export type BudgetBreach = 'STEP_BUDGET' | 'TIME_BUDGET' | 'MODEL_BUDGET';
 export class BudgetTracker {
   private steps = 0;
   private llmCalls = 0;
+  private lastActionAt: number | null = null;
 
   constructor(
     private readonly budget: Budget,
@@ -113,6 +210,27 @@ export class BudgetTracker {
 
   spendStep(): void {
     this.steps += 1;
+  }
+
+  /**
+   * Waits until enough time has passed since the last action, then marks now.
+   *
+   * Lives here rather than as a sleep at each call site because the tracker is
+   * already the thing that owns wall-clock, and because a rate limit expressed
+   * in three places is a rate limit that will be three different numbers within
+   * a month. Wall-clock spent waiting still counts against `maxDurationMs` —
+   * throttling makes a walk slower, not longer-lived.
+   */
+  async throttle(now: number = Date.now()): Promise<void> {
+    const interval = this.budget.minActionIntervalMs ?? 0;
+
+    if (interval > 0 && this.lastActionAt !== null) {
+      const wait = this.lastActionAt + interval - now;
+
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+
+    this.lastActionAt = Date.now();
   }
 
   spendLlmCall(): void {

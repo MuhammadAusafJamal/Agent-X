@@ -1,9 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { chromium, type Page } from 'playwright';
 import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Dialog,
+  type Locator,
+  type Page,
+} from 'playwright';
+import {
+  credentialRefsSchema,
   exploreActionSchema,
   exploreSummarySchema,
   knowledgeValueSchema,
+  parseJson,
   stringifyJson,
   type DraftTestStep,
   type ExplorationResult,
@@ -13,11 +22,18 @@ import {
 } from '@agentx/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TypedConfigService } from '../../config/typed-config.service';
+import { capturePrunedSnapshot } from '../../runner/aria-snapshot';
 import { LlmService } from '../../llm/llm.service';
 import { ResolverService } from '../../resolver/resolver.service';
 import { SpecsService } from '../../specs/specs.service';
 import { CredentialsService } from '../../credentials/credentials.service';
-import { BadRequestError, NotFoundError } from '../../common/errors';
+import type { Redactor } from '../../credentials/redactor';
+import {
+  BadRequestError,
+  NotFoundError,
+  ServiceUnavailableError,
+} from '../../common/errors';
+import { describeSetupFailure } from '../../runner/launch-failure';
 import {
   EXPLORE_STEP_PROMPT,
   EXPLORE_SUMMARY_PROMPT,
@@ -27,10 +43,36 @@ import {
   BudgetTracker,
   isAllowedUrl,
   isDestructive,
+  isFormSubmit,
+  isSideEffecting,
 } from './bounds';
 
-const MAX_SNAPSHOT_CHARS = 6000;
 const ACTION_TIMEOUT_MS = 10_000;
+
+/**
+ * One goal-directed walk, independent of what the caller means to do with it.
+ *
+ * Extracted so a feature check can drive the same bounded loop once per test
+ * case. The bounds, the budget, and the "record the move only if it worked" rule
+ * are the walk's, not the caller's — a second entry point that re-implemented
+ * them would be a second place for them to be wrong.
+ */
+export interface WalkInput {
+  goal: string;
+  startUrl: string;
+  baseUrl: string;
+  budget: BudgetTracker;
+  redactor: Redactor;
+}
+
+export interface WalkResult {
+  steps: DraftTestStep[];
+  trail: string[];
+  refused: string[];
+  visited: string[];
+  stoppedBecause: ExploreStopReason;
+  stoppedDetail: string | null;
+}
 
 /**
  * A goal-driven walk through an application, to find tests nobody wrote.
@@ -99,53 +141,126 @@ export class ExplorerService {
       // here so a pathological retry loop cannot outlive it.
       maxLlmCalls: input.maxSteps + 4,
       maxDurationMs: input.maxDurationSeconds * 1000,
+      minActionIntervalMs: this.config.get('AGENTX_MIN_ACTION_INTERVAL_MS'),
     });
 
+    // The same secrets the runner hides. Resolved from *this environment's*
+    // credential references rather than from nothing: built empty, the redactor
+    // has no secrets to match and `redact` silently returns its input, so every
+    // page the explorer reads would reach the model verbatim. That matters here
+    // more than anywhere, because the explorer cannot sign itself in — the
+    // documented way to explore behind a login is to put the credentials in the
+    // goal, which puts them on the page a moment later.
+    const redactor = this.credentials.redactorFor(
+      parseJson(
+        credentialRefsSchema,
+        environment.credentialRefs,
+        `Environment.credentialRefs#${environment.id}`,
+      ),
+    );
+
+    let browser: Browser;
+    let context: BrowserContext;
+
+    try {
+      ({ browser, context } = await this.openBrowser());
+    } catch (error) {
+      // `POST /explorations` is synchronous, so unlike a run there is no row to
+      // mark — the caller gets the reason directly, and it names the fix.
+      throw new ServiceUnavailableError(describeSetupFailure(error));
+    }
+
+    let walked: WalkResult;
+
+    try {
+      const page = await context.newPage();
+
+      walked = await this.walk(page, context, {
+        goal: input.goal,
+        startUrl,
+        baseUrl: environment.baseUrl,
+        budget,
+        redactor,
+      });
+    } finally {
+      await context.close().catch(() => undefined);
+      await browser.close().catch(() => undefined);
+    }
+
+    const proposed =
+      // One navigation on its own is not a flow worth proposing as a test.
+      walked.steps.length < 2
+        ? null
+        : await this.propose(
+            input,
+            walked.steps,
+            walked.trail,
+            walked.stoppedBecause,
+            budget,
+          );
+
+    return {
+      goal: input.goal,
+      stoppedBecause: walked.stoppedBecause,
+      stoppedDetail: walked.stoppedDetail,
+      stepsTaken: budget.stepsTaken,
+      visited: walked.visited,
+      trail: walked.trail,
+      refused: walked.refused,
+      proposedSpecId: proposed?.id ?? null,
+      proposedSpecName: proposed?.name ?? null,
+    };
+  }
+
+  /**
+   * The bounded loop: snapshot, ask for one move, refuse or allow, act, repeat.
+   *
+   * Public because a feature check runs it once per test case. It takes a page
+   * rather than opening one so a caller driving several cases pays for one
+   * browser, and it never closes what it did not open.
+   */
+  async walk(
+    page: Page,
+    context: BrowserContext,
+    input: WalkInput,
+  ): Promise<WalkResult> {
     const trail: string[] = [];
     const refused: string[] = [];
     const visited: string[] = [];
     const steps: DraftTestStep[] = [];
 
     let stoppedBecause: ExploreStopReason = 'STEP_BUDGET';
-
-    const browser = await chromium.launch({
-      headless: this.config.get('PLAYWRIGHT_HEADLESS'),
-    });
-
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-    });
+    let stoppedDetail: string | null = null;
 
     // Never accept a confirmation. A dialog is the last thing between an
     // exploration and an irreversible action, and the explorer has no business
     // deciding to go through one.
-    context.on('dialog', (dialog) => {
+    const onDialog = (dialog: Dialog): void => {
       refused.push(`dismissed a ${dialog.type()} dialog: ${dialog.message()}`);
       void dialog.dismiss();
-    });
+    };
 
-    let page: Page | null = null;
+    context.on('dialog', onDialog);
 
     try {
-      page = await context.newPage();
-      await page.goto(startUrl, {
+      await page.goto(input.startUrl, {
         waitUntil: 'domcontentloaded',
         timeout: ACTION_TIMEOUT_MS,
       });
 
-      steps.push(navigateStep(startUrl));
-      visited.push(startUrl);
+      steps.push(navigateStep(input.startUrl));
+      visited.push(input.startUrl);
 
       for (;;) {
-        const breach = budget.breach();
+        const breach = input.budget.breach();
 
         if (breach !== null) {
           stoppedBecause = breach;
           break;
         }
 
-        const snapshot = await this.snapshot(page);
-        budget.spendLlmCall();
+        const snapshot = await this.snapshot(page, input.redactor);
+        input.budget.spendLlmCall();
 
         const choice = await this.llm
           .structured({
@@ -172,7 +287,14 @@ export class ExplorerService {
             schema: exploreActionSchema,
             maxTokens: 1200,
           })
-          .catch(() => null);
+          .catch((error: unknown) => {
+            // Keeping the reason is the whole point. Swallowed, an exploration
+            // that failed on its first turn looks exactly like one that ran to
+            // completion and found nothing.
+            stoppedDetail = describe(error);
+            this.logger.error(`Exploration turn failed: ${stoppedDetail}`);
+            return null;
+          });
 
         if (choice === null) {
           stoppedBecause = 'ERROR';
@@ -186,7 +308,7 @@ export class ExplorerService {
 
         // Every bound is applied to the model's answer before anything touches
         // the page.
-        const rejection = this.refuse(choice, page.url(), environment.baseUrl);
+        const rejection = this.refuse(choice, page.url(), input.baseUrl);
 
         if (rejection !== null) {
           refused.push(rejection);
@@ -201,7 +323,8 @@ export class ExplorerService {
           continue;
         }
 
-        budget.spendStep();
+        input.budget.spendStep();
+        await input.budget.throttle();
 
         const performed = await this.perform(page, choice);
 
@@ -226,28 +349,38 @@ export class ExplorerService {
       }
     } catch (error) {
       stoppedBecause = 'ERROR';
+      stoppedDetail = describe(error);
       this.logger.error('Exploration failed', error as Error);
     } finally {
-      await context.close().catch(() => undefined);
-      await browser.close().catch(() => undefined);
+      context.off('dialog', onDialog);
     }
 
-    const proposed =
-      // One navigation on its own is not a flow worth proposing as a test.
-      steps.length < 2
-        ? null
-        : await this.propose(input, steps, trail, stoppedBecause, budget);
+    return { steps, trail, refused, visited, stoppedBecause, stoppedDetail };
+  }
 
-    return {
-      goal: input.goal,
-      stoppedBecause,
-      stepsTaken: budget.stepsTaken,
-      visited,
-      trail,
-      refused,
-      proposedSpecId: proposed?.id ?? null,
-      proposedSpecName: proposed?.name ?? null,
-    };
+  /**
+   * Opens the browser and its context as one unit, closing the browser if the
+   * context fails — otherwise a Chromium process outlives the request that
+   * started it, with nobody holding a handle to close it.
+   */
+  async openBrowser(): Promise<{
+    browser: Browser;
+    context: BrowserContext;
+  }> {
+    const browser = await chromium.launch({
+      headless: this.config.get('PLAYWRIGHT_HEADLESS'),
+    });
+
+    try {
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+      });
+
+      return { browser, context };
+    } catch (error) {
+      await browser.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   /**
@@ -268,6 +401,19 @@ export class ExplorerService {
   ): string | null {
     if (isDestructive(choice.name)) {
       return `refused to activate "${choice.name}" — destructive or session-ending controls are not explored`;
+    }
+
+    if (this.config.get('AGENTX_READ_ONLY_TARGET')) {
+      // Typing is refused outright rather than per-field. Whether a text box is
+      // safe to fill depends on what submits it, which is a judgement; "no FILL"
+      // is a rule, and a rule is what a bound has to be.
+      if (choice.action === 'FILL') {
+        return 'refused to type — this environment is marked read-only';
+      }
+
+      if (isSideEffecting(choice.name)) {
+        return `refused to activate "${choice.name}" — it would submit, send, or sign something up, and this environment is marked read-only`;
+      }
     }
 
     if (choice.action === 'NAVIGATE') {
@@ -336,6 +482,21 @@ export class ExplorerService {
     });
 
     if (!resolution.ok) return { ok: false, why: resolution.message };
+
+    // The name-based rule above catches "Subscribe". This catches the same
+    // button labelled "Continue", which no word list ever will. It runs here
+    // rather than in `refuse` because it needs a resolved element to read from,
+    // and `refuse` is deliberately answerable without a browser.
+    if (
+      this.config.get('AGENTX_READ_ONLY_TARGET') &&
+      choice.action !== 'FILL' &&
+      (await submitsAForm(resolution.locator, page.url()))
+    ) {
+      return {
+        ok: false,
+        why: `refused to activate "${choice.name}" — it submits a form, and this environment is marked read-only`,
+      };
+    }
 
     try {
       if (choice.action === 'FILL') {
@@ -485,19 +646,46 @@ export class ExplorerService {
     }
   }
 
-  private async snapshot(page: Page): Promise<string> {
-    try {
-      const redactor = this.credentials.resolve({ extra: {} }).redactor;
-      const aria = redactor.redact(
-        await page.locator('body').ariaSnapshot({ timeout: 5000 }),
-      );
+  /** The accessibility tree, redacted and capped. Public: planning reads it too. */
+  async snapshot(page: Page, redactor: Redactor): Promise<string> {
+    const captured = await capturePrunedSnapshot(
+      page,
+      redactor,
+      this.config.get('AGENTX_MAX_SNAPSHOT_CHARS'),
+    );
 
-      return aria.length > MAX_SNAPSHOT_CHARS
-        ? `${aria.slice(0, MAX_SNAPSHOT_CHARS)}\n… (truncated)`
-        : aria;
-    } catch {
-      return '(the page could not be read)';
-    }
+    return captured ?? '(the page could not be read)';
+  }
+}
+
+/**
+ * Reads the DOM facts `isFormSubmit` needs, from a resolved element.
+ *
+ * Refuses on its own failure. Not being able to tell whether a control submits
+ * something is not evidence that it does not, and the whole point of a read-only
+ * environment is that the uncertain case does not get tried.
+ */
+async function submitsAForm(
+  locator: Locator,
+  currentUrl: string,
+): Promise<boolean> {
+  try {
+    const form = await locator.evaluate((element: Element) => {
+      const owner = element.closest('form');
+
+      if (owner === null) return null;
+
+      return {
+        method: owner.getAttribute('method'),
+        action: owner.getAttribute('action'),
+      };
+    });
+
+    if (form === null) return false;
+
+    return isFormSubmit({ inForm: true, ...form, currentUrl });
+  } catch {
+    return true;
   }
 }
 

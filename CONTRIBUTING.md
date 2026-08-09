@@ -54,6 +54,21 @@ npm run typecheck && npm run lint && npm test
 npm run test:e2e --workspace @agentx/api   # needs a migrated database
 ```
 
-Also confirm a clean clone still works: `npm install && npm run db:migrate && npm run dev`.
+Also confirm a clean clone still works, in full:
 
-CI gates on the same set for every PR into `main`/`develop`.
+```bash
+npm install                  # postinstall generates the Prisma client
+npm run playwright:install
+npm run db:migrate
+npm run dev
+```
+
+CI gates on the same set for every PR into `main`/`develop` —
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). It runs typecheck, lint,
+unit tests, and the e2e suite against a real browser, with a placeholder
+`ANTHROPIC_API_KEY`: every test either overrides the LLM client or asserts that
+no model call was made, so nothing in CI reaches Anthropic.
+
+The real-model path is `npm run smoke`, which is **not** in CI because it costs
+credits. Run it by hand before a demo — it is the only thing that exercises the
+eight prompts under `apps/api/src/llm/prompts/`.

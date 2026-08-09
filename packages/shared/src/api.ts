@@ -31,6 +31,8 @@ export const API_ERROR_CODES = {
   NOT_FOUND: 'NOT_FOUND',
   CONFLICT: 'CONFLICT',
   BAD_REQUEST: 'BAD_REQUEST',
+  /** Understood, well-formed, and refused anyway — not a thing this deployment will do. */
+  FORBIDDEN: 'FORBIDDEN',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

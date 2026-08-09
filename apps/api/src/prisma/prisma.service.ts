@@ -5,10 +5,12 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { PrismaClient } from '../generated/prisma/client';
-import { resolveDatabasePath, resolveDatabaseUrl } from './database-url';
+import {
+  ensureDatabaseDir,
+  resolveDatabasePath,
+  resolveDatabaseUrl,
+} from './database-url';
 
 /**
  * The database.
@@ -26,10 +28,7 @@ export class PrismaService
   constructor() {
     const url = resolveDatabaseUrl();
 
-    // A fresh clone has no data/ directory, and SQLite will not create a
-    // missing parent — it fails with an unhelpful "unable to open database
-    // file" instead.
-    fs.mkdirSync(path.dirname(resolveDatabasePath()), { recursive: true });
+    ensureDatabaseDir();
 
     super({ adapter: new PrismaBetterSqlite3({ url }) });
   }

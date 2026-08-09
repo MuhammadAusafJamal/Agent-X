@@ -17,6 +17,9 @@ import { AgentModule } from './agent/agent.module';
 import { BugsModule } from './bugs/bugs.module';
 import { HealingsModule } from './healings/healings.module';
 import { ReportsModule } from './reports/reports.module';
+import { FeaturesModule } from './features/features.module';
+import { FeatureCheckModule } from './agent/feature-check/feature-check.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -38,6 +41,9 @@ import { ReportsModule } from './reports/reports.module';
     HealingsModule,
     ReportsModule,
     ExecutionsModule,
+    FeaturesModule,
+    FeatureCheckModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

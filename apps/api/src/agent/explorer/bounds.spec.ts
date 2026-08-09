@@ -3,6 +3,8 @@ import {
   BudgetTracker,
   isAllowedUrl,
   isDestructive,
+  isFormSubmit,
+  isSideEffecting,
 } from './bounds';
 
 /**
@@ -58,6 +60,120 @@ describe('Explorer bounds', () => {
     it('treats an unnamed control as harmless — the name is the signal', () => {
       expect(isDestructive(null)).toBe(false);
       expect(isDestructive(undefined)).toBe(false);
+    });
+  });
+
+  describe('side-effecting controls', () => {
+    it.each([
+      'Subscribe',
+      'Sign up for our newsletter',
+      'Sign up',
+      'Register',
+      'Submit',
+      'Send message',
+      'Book now',
+      'Reserve a table',
+      'Buy tickets',
+      'Checkout',
+      'Add to cart',
+      'Pay now',
+      'Donate',
+      'Contact us',
+      'Make an enquiry',
+      'Apply now',
+      'Request a callback',
+      'Download brochure',
+      'Get in touch',
+      'Join the mailing list',
+    ])('refuses "%s" on a read-only target', (name) => {
+      expect(isSideEffecting(name)).toBe(true);
+    });
+
+    it.each([
+      'Search',
+      'Things to do',
+      'Where to go',
+      'Next',
+      'Read more',
+      'View map',
+      'Close',
+      'Sign in',
+    ])('allows "%s" — it only reads', (name) => {
+      expect(isSideEffecting(name)).toBe(false);
+    });
+
+    it('stays separate from the destructive list, so the two reasons differ', () => {
+      // "Unsubscribe" damages state and is refused everywhere, read-only or not.
+      expect(isDestructive('Unsubscribe')).toBe(true);
+      // "Subscribe" damages nothing; it reaches somebody, which is a different
+      // problem and only a problem on a site you do not own.
+      expect(isDestructive('Subscribe')).toBe(false);
+      expect(isSideEffecting('Subscribe')).toBe(true);
+    });
+
+    it('treats an unnamed control as harmless — the name is the signal', () => {
+      expect(isSideEffecting(null)).toBe(false);
+      expect(isSideEffecting(undefined)).toBe(false);
+    });
+  });
+
+  describe('form submission', () => {
+    const currentUrl = 'https://example.test/page';
+
+    it('allows a control that is not in a form at all', () => {
+      expect(
+        isFormSubmit({ inForm: false, method: null, action: null, currentUrl }),
+      ).toBe(false);
+    });
+
+    it('allows a same-origin GET form — that is a search box, and searching reads', () => {
+      expect(
+        isFormSubmit({
+          inForm: true,
+          method: 'GET',
+          action: '/search',
+          currentUrl,
+        }),
+      ).toBe(false);
+
+      expect(
+        isFormSubmit({ inForm: true, method: null, action: '', currentUrl }),
+      ).toBe(false);
+    });
+
+    it('refuses any POST, whatever the button is called', () => {
+      // The case a word list cannot catch: a newsletter signup whose button
+      // says "Continue".
+      expect(
+        isFormSubmit({
+          inForm: true,
+          method: 'post',
+          action: '/newsletter',
+          currentUrl,
+        }),
+      ).toBe(true);
+    });
+
+    it('refuses a GET that posts to somebody else', () => {
+      expect(
+        isFormSubmit({
+          inForm: true,
+          method: 'get',
+          action: 'https://mailinglist.example.com/join',
+          currentUrl,
+        }),
+      ).toBe(true);
+    });
+
+    it('refuses an action it cannot parse rather than guessing', () => {
+      expect(
+        isFormSubmit({
+          inForm: true,
+          method: 'get',
+          action: 'http://',
+          currentUrl: 'not a url',
+        }),
+      ).toBe(true);
     });
   });
 
@@ -141,6 +257,56 @@ describe('Explorer bounds', () => {
       const tracker = new BudgetTracker(budget, 0);
 
       expect(tracker.breach(1500)).toBe('TIME_BUDGET');
+    });
+  });
+
+  describe('action throttle', () => {
+    const budget = {
+      maxSteps: 10,
+      maxLlmCalls: 10,
+      maxDurationMs: 60_000,
+      minActionIntervalMs: 1500,
+    };
+
+    it('does not wait before the first action', async () => {
+      const tracker = new BudgetTracker(budget, 0);
+      const startedAt = Date.now();
+
+      await tracker.throttle();
+
+      expect(Date.now() - startedAt).toBeLessThan(100);
+    });
+
+    it('waits out the remainder of the interval, not the whole of it', async () => {
+      const tracker = new BudgetTracker({
+        ...budget,
+        minActionIntervalMs: 120,
+      });
+
+      await tracker.throttle();
+      const startedAt = Date.now();
+      await tracker.throttle();
+
+      const waited = Date.now() - startedAt;
+
+      expect(waited).toBeGreaterThanOrEqual(80);
+      expect(waited).toBeLessThan(400);
+    });
+
+    it('is a no-op when no interval is configured', async () => {
+      const tracker = new BudgetTracker({
+        maxSteps: 10,
+        maxLlmCalls: 10,
+        maxDurationMs: 60_000,
+      });
+
+      const startedAt = Date.now();
+
+      await tracker.throttle();
+      await tracker.throttle();
+      await tracker.throttle();
+
+      expect(Date.now() - startedAt).toBeLessThan(100);
     });
   });
 });

@@ -101,11 +101,11 @@ The demo app gained a **danger zone** — a real `Delete account` button posting
 
 **Acceptance**
 
-- [x] `npm run demo` migrates, seeds and starts everything; the seeded spec then passes end to end with one model call (the semantic step).
+- [x] `npm run demo` migrates, seeds and starts everything; the seeded spec then passes end to end with one model call (the semantic step). It also **generates the Prisma client** first — without that step it died at `db:seed` on any machine that had not already generated one, which is every fresh clone.
 - [x] Re-seeding leaves one of everything and keeps an existing edited version rather than burying it.
 - [x] The example app runs offline with no dependencies.
 - [x] Each breakage switch produces its intended behaviour — verified live, below.
-- [ ] **A single command that also *runs* the spec.** `npm run demo` brings the system up; starting the run is still a click in the dashboard or a POST. Wiring an auto-run into the same command would mean the demo starts by racing a browser launch against a Next.js cold start.
+- [ ] **A single command that also *runs* the spec.** `npm run demo` brings the system up; starting the run is still a click in the dashboard or a POST. Wiring an auto-run into the same command would mean the demo starts by racing a browser launch against a Next.js cold start. The 2026-08-09 audit made that click **one** click rather than nine: the home page now finds the seeded specification and puts a Run button on it, so the remaining gap is a preference rather than a chore. `npm run smoke` is the scripted, no-click version, and it asserts the outcome instead of showing it.
 
 ---
 
@@ -132,6 +132,7 @@ Two things the live runs showed that the tests had not:
 
 ## Not built
 
+- **Any UI for the explorer.** `POST /explorations` works, is bounds-tested, and has been run live — and nothing in `apps/web` calls it. `grep -i explor apps/web/src` returns nothing, which means `EXPLORED` is a specification source no user can produce and `EXPLORE` is an execution mode no user can select. E7.3 is done as an *agent*; it is not done as a *feature*, and marking the phase `DONE` obscured that until the 2026-08-09 audit. A dialog on the application workspace is the missing piece: the endpoint is synchronous and returns `proposedSpecId`, so success is one redirect.
 - **A `diff` command.** Byte-identical bodies make reports diffable; nothing in the product actually diffs two of them for you.
 - **Static export beyond Markdown.** The report page renders the structured document and the file downloads as Markdown. There is no self-contained HTML bundle with the evidence inlined.
 - **Multiple specs from one exploration.** A walk proposes one specification. "Find every path to checkout" needs several explorations, and nothing merges them.

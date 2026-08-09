@@ -91,6 +91,25 @@ export const executionSchema = z.object({
 export type Execution = z.infer<typeof executionSchema>;
 
 /**
+ * What ran, in words rather than in ids.
+ *
+ * Deliberately *not* folded into `executionSchema`. That shape is also what
+ * `POST /executions` and `POST /executions/:id/cancel` return, straight from
+ * the row they just wrote — with no joins loaded, they would fail their own
+ * response validation the moment these became required. So the names ride on
+ * the read shapes only, which are the ones that actually have to render a
+ * sentence a person can read.
+ */
+export const executionNamesSchema = z.object({
+  specName: z.string(),
+  specVersion: z.number().int().min(1),
+  environmentName: z.string(),
+});
+
+export const executionListItemSchema = executionSchema.merge(executionNamesSchema);
+export type ExecutionListItem = z.infer<typeof executionListItemSchema>;
+
+/**
  * Aggregates over an execution's `LlmCall` rows. Computed on read rather than
  * denormalized onto `Execution`, so the totals cannot drift from the audit rows
  * they summarize.
@@ -103,9 +122,11 @@ export const executionTotalsSchema = z.object({
 });
 export type ExecutionTotals = z.infer<typeof executionTotalsSchema>;
 
-export const executionDetailSchema = executionSchema.extend({
-  steps: z.array(executionStepWithObservationsSchema),
-  artifacts: z.array(artifactSchema),
-  totals: executionTotalsSchema,
-});
+export const executionDetailSchema = executionSchema
+  .merge(executionNamesSchema)
+  .extend({
+    steps: z.array(executionStepWithObservationsSchema),
+    artifacts: z.array(artifactSchema),
+    totals: executionTotalsSchema,
+  });
 export type ExecutionDetail = z.infer<typeof executionDetailSchema>;

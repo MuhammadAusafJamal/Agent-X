@@ -8,6 +8,10 @@ import {
 } from '@agentx/shared';
 import { LlmService } from '../llm/llm.service';
 import type { Redactor } from '../credentials/redactor';
+import {
+  DEFAULT_MAX_SNAPSHOT_CHARS,
+  capturePrunedSnapshot,
+} from '../runner/aria-snapshot';
 import { RESOLVE_ELEMENT_PROMPT } from '../llm/prompts/resolve-element.prompt';
 
 /** One thing to try: a strategy, and the locator it produces. */
@@ -83,6 +87,14 @@ export interface ResolveOptions {
     targetDescription: string;
     executionId: string;
     redactor?: Redactor;
+    /**
+     * How much accessibility tree the model may be shown.
+     *
+     * Passed in rather than read from config so the resolver stays constructible
+     * bare — the deterministic ladder must not acquire a dependency on the
+     * environment to satisfy the one rung that costs money.
+     */
+    maxSnapshotChars?: number;
   };
 }
 
@@ -104,7 +116,6 @@ const CONFIDENCE: Record<ResolutionStrategy, number> = {
 };
 
 const MAX_INSPECTED = 20;
-const MAX_SNAPSHOT_CHARS = 6000;
 
 /**
  * Turns a step's description into exactly one element.
@@ -211,17 +222,16 @@ export class ResolverService {
     options: NonNullable<ResolveOptions['llm']>,
     attempted: ResolutionFailure['attempted'],
   ): Promise<ResolutionSuccess | null> {
-    let snapshot: string;
+    const snapshot = await capturePrunedSnapshot(
+      page,
+      options.redactor,
+      options.maxSnapshotChars ?? DEFAULT_MAX_SNAPSHOT_CHARS,
+    );
 
-    try {
-      snapshot = await page.locator('body').ariaSnapshot({ timeout: 5000 });
-    } catch {
-      return null;
-    }
-
-    if (snapshot.length > MAX_SNAPSHOT_CHARS) {
-      snapshot = `${snapshot.slice(0, MAX_SNAPSHOT_CHARS)}\n… (truncated)`;
-    }
+    // No page to read is no basis for a choice. Falling through with a
+    // placeholder would ask the model to name an element in a page it was never
+    // shown, and every answer to that is invented.
+    if (snapshot === null) return null;
 
     let choice;
 

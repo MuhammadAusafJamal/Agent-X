@@ -1,9 +1,11 @@
-import { ProjectDetail } from "./project-detail";
+import { redirect } from "next/navigation";
 
-export default async function ProjectPage({
-  params,
-}: PageProps<"/projects/[id]">) {
-  const { id } = await params;
-
-  return <ProjectDetail projectId={id} />;
+/**
+ * Projects are a grouping, not a destination.
+ *
+ * This route rendered a list of the applications in one project — two clicks
+ * deep for content that now sits under a heading on `/projects`.
+ */
+export default function ProjectPage() {
+  redirect("/projects");
 }

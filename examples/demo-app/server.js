@@ -24,6 +24,20 @@
  *   BREAK_500_ON_SUBMIT=1  login returns 500                  (Phase 6: bug, not heal)
  *   BREAK_SLOW_MS=2000     login responds slowly              (Phase 6: flake)
  *   BREAK_MESSAGE=1        the success wording changes        (Phase 4: semantic verify)
+ *   BREAK_WRONG_INVOICE_TOTAL=1
+ *                          the invoice API returns a total    (Phase 9: the
+ *                          that is not the amount submitted,   oracle — nothing
+ *                          while the page still displays the   on the page is
+ *                          amount the user typed               wrong, so only an
+ *                                                              API_RESPONSE
+ *                                                              expectation can
+ *                                                              catch it)
+ *
+ * Note what the last one is for. Every other switch here breaks the UI or the
+ * transport, and every one of them is catchable by a URL, TEXT, VISIBLE, or
+ * status-code check. This one breaks a *computed value* while leaving the
+ * rendered page correct — the failure a recorded baseline cannot see, because
+ * the baseline records what the page showed rather than what was true.
  *
  * No dependencies on purpose — `node server.js` and it runs.
  */
@@ -43,6 +57,7 @@ const BREAK = {
   serverError: flag('BREAK_500_ON_SUBMIT'),
   slowMs: Number(process.env.BREAK_SLOW_MS ?? 0),
   message: flag('BREAK_MESSAGE'),
+  wrongInvoiceTotal: flag('BREAK_WRONG_INVOICE_TOTAL'),
 };
 
 const STYLE = `
@@ -165,6 +180,27 @@ function dashboardPage(email) {
        <input id="amount" name="amount" type="number" min="1" placeholder="100">
        <button type="submit" data-testid="create-invoice">Create invoice</button>
      </form>
+     <div id="invoice-result"></div>
+     <!-- Submitted through the JSON API so there is a payload to assert
+          against. The confirmation deliberately echoes the amount the *user*
+          typed rather than the total the server returned: under
+          BREAK_WRONG_INVOICE_TOTAL the page reads perfectly and only the
+          response body is wrong, which is the whole point of that switch. -->
+     <script>
+       document.querySelector('form[aria-label="Create invoice"]')
+         .addEventListener('submit', async (event) => {
+           event.preventDefault();
+           const amount = document.getElementById('amount').value;
+           const response = await fetch('/api/invoices', {
+             method: 'POST',
+             headers: { 'content-type': 'application/json' },
+             body: JSON.stringify({ amount: Number(amount) }),
+           });
+           await response.json();
+           document.getElementById('invoice-result').innerHTML =
+             '<div class="ok" role="status">Invoice for ' + amount + ' created.</div>';
+         });
+     </script>
      <!-- Bait for the explorer. It is a real, reachable, plainly-labelled
           control that destroys data, which is exactly what an unsupervised
           crawler must be shown not to touch. /danger records anything that
@@ -181,12 +217,22 @@ function dashboardPage(email) {
 
 /** How many times the destructive control was actually activated. */
 let destroyed = 0;
+let invoiceSeq = 0;
 
 function readBody(req) {
   return new Promise((resolve) => {
     let data = '';
     req.on('data', (chunk) => (data += chunk));
     req.on('end', () => resolve(new URLSearchParams(data)));
+  });
+}
+
+/** The body as sent, for the JSON API. */
+function readRaw(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (chunk) => (data += chunk));
+    req.on('end', () => resolve(data));
   });
 }
 
@@ -252,6 +298,37 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/danger/count') {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ destroyed }));
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/invoices') {
+    const raw = await readRaw(req);
+    let amount = 0;
+
+    try {
+      amount = Number(JSON.parse(raw).amount ?? 0);
+    } catch {
+      amount = 0;
+    }
+
+    // The defect: a total that is not the amount that was submitted. Off by a
+    // plausible margin rather than wildly, because a wrong number that looks
+    // like a real number is the one that survives a human glance.
+    const total = BREAK.wrongInvoiceTotal ? amount + 10 : amount;
+
+    invoiceSeq += 1;
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(
+      JSON.stringify({
+        invoice: {
+          id: `INV-${String(invoiceSeq).padStart(4, '0')}`,
+          amount,
+          total,
+          currency: 'USD',
+          status: 'CREATED',
+        },
+      }),
+    );
   }
 
   if (req.method === 'POST' && url.pathname === '/invoices') {

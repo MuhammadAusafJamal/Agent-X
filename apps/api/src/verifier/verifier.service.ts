@@ -11,22 +11,37 @@ import {
 } from '@agentx/shared';
 import { ResolverService } from '../resolver/resolver.service';
 import { LlmService } from '../llm/llm.service';
+import { TypedConfigService } from '../config/typed-config.service';
 import type { Redactor } from '../credentials/redactor';
+import { capturePrunedSnapshot } from '../runner/aria-snapshot';
 import { VERIFY_STEP_PROMPT } from '../llm/prompts/verify-step.prompt';
-import { checkConsole, checkNetwork, checkUrl } from './deterministic';
+import {
+  checkApiResponse,
+  checkConsole,
+  checkNetwork,
+  checkUrl,
+} from './deterministic';
 
 export interface VerifyContext {
   intent: string;
   hints: TargetHints;
+  /** What this step triggered — what `NETWORK_OK` judges. */
   network: NetworkEntry[];
+  /**
+   * What the whole run has seen so far, for `API_RESPONSE`.
+   *
+   * A criterion about a returned value is usually asserted in a step of its own,
+   * after the action that produced the payload. Judging it on step-scoped
+   * traffic would leave it permanently inconclusive. Defaults to the step's own
+   * requests so a caller that does not track a run still gets a useful answer.
+   */
+  runNetwork?: NetworkEntry[];
   console: ConsoleEntry[];
   redactor: Redactor;
   executionId: string;
   /** Set false to keep a run entirely free of model calls. */
   allowSemantic?: boolean;
 }
-
-const MAX_SNAPSHOT_CHARS = 6000;
 
 /**
  * Decides whether a step achieved what it intended.
@@ -44,6 +59,7 @@ export class VerifierService {
   constructor(
     private readonly resolver: ResolverService,
     private readonly llm: LlmService,
+    private readonly config: TypedConfigService,
   ) {}
 
   async verify(
@@ -84,6 +100,12 @@ export class VerifierService {
 
       case 'NETWORK_OK':
         return checkNetwork(context.network, expectation);
+
+      case 'API_RESPONSE':
+        return checkApiResponse(
+          context.runNetwork ?? context.network,
+          expectation,
+        );
 
       case 'NO_CONSOLE_ERRORS':
         return checkConsole(context.console, expectation);
@@ -193,20 +215,18 @@ export class VerifierService {
     context: VerifyContext,
     deterministic: DeterministicResult,
   ): Promise<VerificationResult> {
-    let snapshot = '(not captured)';
+    // The accessibility tree, not raw DOM: smaller, and better signal.
+    const captured = await capturePrunedSnapshot(
+      page,
+      context.redactor,
+      this.config.get('AGENTX_MAX_SNAPSHOT_CHARS'),
+    );
 
-    try {
-      // The accessibility tree, not raw DOM: smaller, and better signal.
-      snapshot = context.redactor.redact(
-        await page.locator('body').ariaSnapshot({ timeout: 5000 }),
-      );
-    } catch {
+    if (captured === null) {
       this.logger.debug('No ARIA snapshot for semantic verification');
     }
 
-    if (snapshot.length > MAX_SNAPSHOT_CHARS) {
-      snapshot = `${snapshot.slice(0, MAX_SNAPSHOT_CHARS)}\n… (truncated)`;
-    }
+    const snapshot = captured ?? '(not captured)';
 
     const errors = context.console.filter((entry) => entry.type === 'error');
 
@@ -260,6 +280,10 @@ function describeExpectation(expectation: Expectation): string {
       return `the text “${expectation.value}” should appear`;
     case 'NETWORK_OK':
       return `no request should fail (above ${expectation.maxStatus})`;
+    case 'API_RESPONSE':
+      return expectation.match === 'exists'
+        ? `the response from “${expectation.urlPattern}” should contain “${expectation.jsonPath}”`
+        : `“${expectation.jsonPath}” in the response from “${expectation.urlPattern}” should ${expectation.match} “${expectation.value ?? ''}”`;
     case 'NO_CONSOLE_ERRORS':
       return 'there should be no console errors';
     case 'SEMANTIC':

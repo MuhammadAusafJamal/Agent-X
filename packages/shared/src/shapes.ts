@@ -83,6 +83,27 @@ export const expectationSchema = z.discriminatedUnion('kind', [
     urlPattern: z.string().optional(),
     maxStatus: z.number().int().min(100).max(599).default(399),
   }),
+  /**
+   * A value inside a JSON response body.
+   *
+   * `NETWORK_OK` reads a status code and nothing else, so a `200` carrying the
+   * wrong number passes it clean. This is the kind that lets an acceptance
+   * criterion about a *value* — a total, an id, a status field — fail, and it
+   * does so deterministically: no model call, and the same answer every run.
+   */
+  z.object({
+    kind: z.literal('API_RESPONSE'),
+    /** Substring of the request URL, the same matching `NETWORK_OK` uses. */
+    urlPattern: z.string().min(1),
+    /** Dot path into the parsed body: `invoice.total`, `items.0.sku`. */
+    jsonPath: z.string().min(1),
+    match: z.enum(['equals', 'contains', 'matches', 'exists']),
+    /**
+     * Compared as a string, so `1500` and `"1500"` are the same claim. Omitted
+     * for `exists`, which asks only whether the path is present.
+     */
+    value: z.string().optional(),
+  }),
   z.object({
     kind: z.literal('NO_CONSOLE_ERRORS'),
     /** Messages matching these patterns are ignored — real apps log noise. */
@@ -151,6 +172,18 @@ export const networkEntrySchema = z.object({
   ok: z.boolean().optional(),
   durationMs: z.number().optional(),
   resourceType: z.string().optional(),
+  /**
+   * The response body, for JSON responses only, truncated and redacted.
+   *
+   * Captured because a status code cannot answer "did it return the right
+   * total". Restricted to JSON and capped in size on purpose: buffering every
+   * image and bundle a page loads would bloat the evidence tree for no signal.
+   * Absent whenever the body was not JSON, was too large, or could not be read
+   * — and absent must never be read as "checked and fine".
+   */
+  responseBody: z.string().optional(),
+  /** True when a body existed but was dropped by the cap or the type filter. */
+  bodyOmitted: z.boolean().optional(),
 });
 export type NetworkEntry = z.infer<typeof networkEntrySchema>;
 
@@ -200,3 +233,13 @@ export type DeterministicResult = z.infer<typeof deterministicResultSchema>;
 
 export const reproStepsSchema = z.array(z.string().min(1));
 export type ReproSteps = z.infer<typeof reproStepsSchema>;
+
+/**
+ * Artifact ids captured at the moment a defect was observed.
+ *
+ * Lives here rather than beside its one reader so both ends of the column share
+ * a definition: declared privately in the mapper, the write side had nothing to
+ * validate against and quietly used a bare `JSON.stringify`.
+ */
+export const evidenceRefsSchema = z.array(z.string().min(1));
+export type EvidenceRefs = z.infer<typeof evidenceRefsSchema>;

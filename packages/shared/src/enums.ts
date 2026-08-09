@@ -26,7 +26,20 @@ export const recordedEventTypeSchema = z.enum([
 ]);
 export type RecordedEventType = z.infer<typeof recordedEventTypeSchema>;
 
-export const specSourceSchema = z.enum(['RECORDED', 'MANUAL', 'HEALED', 'EXPLORED']);
+/**
+ * `GENERATED` is distinct from `EXPLORED` on purpose: an explored spec came from
+ * a goal-directed walk whose expectations describe what the page became, while a
+ * generated one was written against acceptance criteria a human supplied. Only
+ * the second carries an oracle, and a reader of the spec list should be able to
+ * tell which is which.
+ */
+export const specSourceSchema = z.enum([
+  'RECORDED',
+  'MANUAL',
+  'HEALED',
+  'EXPLORED',
+  'GENERATED',
+]);
 export type SpecSource = z.infer<typeof specSourceSchema>;
 
 export const actionTypeSchema = z.enum([
